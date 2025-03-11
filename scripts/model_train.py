@@ -89,6 +89,18 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
     return metrics
 
 
+
+def build_criterion(model, hyp, data, device):
+    nc = data.get('nc', 1)
+    if hyp.criterion == "weighted_binary_cross_entropy":
+        pos_weight = torch.tensor(data['pos_weights']).reshape(nc, 1, 1).to(device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+
+    return criterion
+
+
 def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     pretrained = False
@@ -115,13 +127,7 @@ def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
     # Use no extra workers for CPU/MPS devices.
     workers = 0 if device.type in {"cpu", "mps"} else hyp.workers
 
-
-    # Define loss function
-    if hyp.criterion == "weighted_binary_cross_entropy":
-        pos_weight = torch.tensor(data['pos_weights']).reshape(nc, 1, 1).to(device)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    else:
-        criterion = nn.BCEWithLogitsLoss()
+    criterion = build_criterion(model, hyp, data)
 
     # Define optimization components
     optimizer = torch.optim.Adam(model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay)
@@ -280,46 +286,3 @@ if __name__ == "__main__":
 
     train(model, hyp, data, save_dir=Path("./runs"))
 
-
-"""
-You are a genius PhD in Computer Science with a specialization in deep learning
-Notes and thoughts:
-* Task: Landslide detection as binary image segmentation.
-* You have this draft code, the goal is to create a script that allows you to run experiments with different models, losses, and augmentations
-* You need to code in elegant way to maintain code readabiliy and reusability
-
-
-Main points to follow:
- - Fix bugs if you find some
- - Log with wandb metrics, images (using Wandb Table and Image to easly visualize segmentation masks), and model weights, any useful insight
- - Table artifact which include images should be log on final epoch (either last or when early stopping)
-
- - Metrics should include:
-    - num params of the model
-    - training and validation loss
-    - TP, FP, FN, TN, F1, IoU, Precision, Recall, Accuracy, AUC ROC curve
-
- - Logging with wandb should be optional and not required to be installed
- - Enabe organized local model weights checkpointing
- - Allow to resume runs from a checkpoint
- - Earlystopping on F1 score if not improving in `patience` (generally 10) epochs
- - Evalute some scheduler to be parametrized in hyp
- - support these losses:
-    - "binary_cross_entropy"
-    - "weighted_binary_cross_entropy"
-    - "cross_entropy"
-    - "focal_loss"
-    - "lovasz_loss"
-    - "dice_loss"
-    - "binary_cross_entropy+lovasz_loss"
-    - "binary_cross_entropy+dice_loss"
-    - "focal_loss+lovasz_loss"
-    - "focal_loss+dice_loss"
- - support these models:
-    - Unet (already implemented)
-    - Segformer
-    - ResUnet
-    - Swintransformer
-"""
-
-#  - check if the model is overfitting or underfitting
