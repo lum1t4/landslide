@@ -251,6 +251,8 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
-
-.dvc/
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,windows,macos
+
+# Project specific
+.dvc/
+data/
