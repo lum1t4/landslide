@@ -6,25 +6,34 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torch.nn.functional as F
+from torch import Tensor
 from torch.utils.data import Sampler
-
-from typing import Callable, Optional, Literal
+from typing_extensions import TypeGuard
+from typing import Optional
 
 # PyTorch Multi-GPU DDP Constants
 RANK = int(os.getenv("RANK", -1))
-WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
-LOCAL_RANK = int(os.getenv("LOCAL_RANK", -1))  # https://pytorch.org/docs/stable/elastic/run.html
+WORLD_SIZE = int(os.getenv("WORLD_SIZE", 1))
+LOCAL_RANK = int(
+    os.getenv("LOCAL_RANK", -1)
+)  # https://pytorch.org/docs/stable/elastic/run.html
 TORCH_2_0 = True
+
 
 def intersect_dicts(da, db, exclude=()):
     """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
-    return {k: v for k, v in da.items() if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape}
+    return {
+        k: v
+        for k, v in da.items()
+        if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape
+    }
 
 
 def is_parallel(model):
     """Returns True if model is of type DP or DDP."""
-    return isinstance(model, (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel))
+    return isinstance(
+        model, (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel)
+    )
 
 
 def de_parallel(model):
@@ -42,12 +51,16 @@ def init_seeds(seed: int = 0, deterministic: bool = True):
     # torch.backends.cudnn.benchmark = True  # AutoBatch problem https://github.com/ultralytics/yolov5/issues/9287
     if deterministic:
         if TORCH_2_0:
-            torch.use_deterministic_algorithms(True, warn_only=True)  # warn if deterministic is not possible
+            torch.use_deterministic_algorithms(
+                True, warn_only=True
+            )  # warn if deterministic is not possible
             torch.backends.cudnn.deterministic = True
             os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
             os.environ["PYTHONHASHSEED"] = str(seed)
         else:
-            logging.warning("WARNING ⚠️ Upgrade to torch>=2.0.0 for deterministic training.")
+            logging.warning(
+                "WARNING ⚠️ Upgrade to torch>=2.0.0 for deterministic training."
+            )
     else:
         torch.use_deterministic_algorithms(False)
         torch.backends.cudnn.deterministic = False
@@ -122,10 +135,10 @@ class DistributedEvalSampler(Sampler):
         self.epoch = 0
         # self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
         # self.total_size = self.num_samples * self.num_replicas
-        self.total_size = len(self.dataset)         # true value without extra samples
+        self.total_size = len(self.dataset)  # true value without extra samples
         indices = list(range(self.total_size))
-        indices = indices[self.rank:self.total_size:self.num_replicas]
-        self.num_samples = len(indices)             # true value without extra samples
+        indices = indices[self.rank : self.total_size : self.num_replicas]
+        self.num_samples = len(indices)  # true value without extra samples
 
         self.shuffle = shuffle
         self.seed = seed
@@ -139,13 +152,12 @@ class DistributedEvalSampler(Sampler):
         else:
             indices = list(range(len(self.dataset)))
 
-
         # # add extra samples to make it evenly divisible
         # indices += indices[:(self.total_size - len(indices))]
         # assert len(indices) == self.total_size
 
         # subsample
-        indices = indices[self.rank:self.total_size:self.num_replicas]
+        indices = indices[self.rank : self.total_size : self.num_replicas]
         assert len(indices) == self.num_samples
 
         return iter(indices)
@@ -187,7 +199,6 @@ def device_memory_clear(device: torch.device):
         torch.cuda.empty_cache()
 
 
-
 def seed_worker(worker_id):  # noqa
     """Set dataloader worker seed https://pytorch.org/docs/stable/notes/randomness.html#dataloader."""
     worker_seed = torch.initial_seed() % 2**32
@@ -195,8 +206,13 @@ def seed_worker(worker_id):  # noqa
     random.seed(worker_seed)
 
 
-
-def one_hot(labels: torch.Tensor, num_classes: int, device: torch.device, dtype: torch.dtype, eps: float = 1e-6) -> torch.Tensor:
+def one_hot(
+    labels: Tensor,
+    num_classes: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    eps: float = 1e-6,
+) -> Tensor:
     r"""Convert an integer label x-D tensor to a one-hot (x+1)-D tensor.
 
     Args:
@@ -223,16 +239,104 @@ def one_hot(labels: torch.Tensor, num_classes: int, device: torch.device, dtype:
                   [1.0000e+00, 1.0000e-06]]]])
 
     """
-    if not isinstance(labels, torch.Tensor):
+    if not isinstance(labels, Tensor):
         raise TypeError(f"Input labels type is not a Tensor. Got {type(labels)}")
 
     if not labels.dtype == torch.int64:
-        raise ValueError(f"labels must be of the same dtype torch.int64. Got: {labels.dtype}")
+        raise ValueError(
+            f"labels must be of the same dtype torch.int64. Got: {labels.dtype}"
+        )
 
     if num_classes < 1:
-        raise ValueError(f"The number of classes must be bigger than one. Got: {num_classes}")
+        raise ValueError(
+            f"The number of classes must be bigger than one. Got: {num_classes}"
+        )
 
     shape = labels.shape
-    one_hot = torch.zeros((shape[0], num_classes) + shape[1:], device=device, dtype=dtype)
+    one_hot = torch.zeros(
+        (shape[0], num_classes) + shape[1:], device=device, dtype=dtype
+    )
 
     return one_hot.scatter_(1, labels.unsqueeze(1), 1.0) + eps
+
+
+def is_tensor(
+    x: object, msg: Optional[str] = None, raises: bool = True
+) -> TypeGuard[Tensor]:
+    """Check the input variable is a Tensor.
+
+    Args:
+        x: any input variable.
+        msg: message to show in the exception.
+        raises: bool indicating whether an exception should be raised upon failure.
+
+    Raises:
+        TypeException: if the input variable does not match with the expected and raises is True.
+
+    Example:
+        >>> x = torch.rand(2, 3, 3)
+        >>> is_tensor(x, "Invalid tensor")
+        True
+
+    """
+    # TODO: Move to use typeguard here dropping support for JIT
+    if not isinstance(x, Tensor):
+        if raises:
+            raise TypeError(f"Not a Tensor type. Got: {type(x)}.\n{msg}")
+        return False
+    return True
+
+
+def check_shape(x: Tensor, shape: list[str], raises: bool = True) -> bool:
+    """Check whether a tensor has a specified shape.
+
+    The shape can be specified with a implicit or explicit list of strings.
+    The guard also check whether the variable is a type `Tensor`.
+
+    Args:
+        x: the tensor to evaluate.
+        shape: a list with strings with the expected shape.
+        raises: bool indicating whether an exception should be raised upon failure.
+
+    Raises:
+        Exception: if the input tensor is has not the expected shape and raises is True.
+
+    Example:
+        >>> x = torch.rand(2, 3, 4, 4)
+        >>> check_shape(x, ["B", "C", "H", "W"])  # implicit
+        True
+
+        >>> x = torch.rand(2, 3, 4, 4)
+        >>> check_shape(x, ["2", "3", "H", "W"])  # explicit
+        True
+
+    """
+    if "*" == shape[0]:
+        shape_to_check = shape[1:]
+        x_shape_to_check = x.shape[-len(shape) + 1 :]
+    elif "*" == shape[-1]:
+        shape_to_check = shape[:-1]
+        x_shape_to_check = x.shape[: len(shape) - 1]
+    else:
+        shape_to_check = shape
+        x_shape_to_check = x.shape
+
+    if len(x_shape_to_check) != len(shape_to_check):
+        if raises:
+            raise TypeError(f"{x} shape must be [{shape}]. Got {x.shape}")
+        else:
+            return False
+
+    for i in range(len(x_shape_to_check)):
+        # The voodoo below is because torchscript does not like
+        # that dim can be both int and str
+        dim_: str = shape_to_check[i]
+        if not dim_.isnumeric():
+            continue
+        dim = int(dim_)
+        if x_shape_to_check[i] != dim:
+            if raises:
+                raise TypeError(f"{x} shape must be [{shape}]. Got {x.shape}")
+            else:
+                return False
+    return True

@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 
+from landslide.torch import check_shape
 
 # based on:
 # https://github.com/bermanmaxim/LovaszSoftmax
@@ -52,12 +53,19 @@ def lovasz_hinge_loss(pred: Tensor, target: Tensor) -> Tensor:
         >>> output.backward()
 
     """
+    check_shape(pred, ["B", "1", "H", "W"])
+
+    check_shape(target, ["B", "H", "W"])
 
     if not pred.shape[-2:] == target.shape[-2:]:
-        raise ValueError(f"pred and target shapes must be the same. Got: {pred.shape} and {target.shape}")
+        raise ValueError(
+            f"pred and target shapes must be the same. Got: {pred.shape} and {target.shape}"
+        )
 
     if not pred.device == target.device:
-        raise ValueError(f"pred and target must be in the same device. Got: {pred.device} and {target.device}")
+        raise ValueError(
+            f"pred and target must be in the same device. Got: {pred.device} and {target.device}"
+        )
 
     # flatten pred and target [B, -1] and to float
     pred_flatten: Tensor = pred.reshape(pred.shape[0], -1)
@@ -70,7 +78,9 @@ def lovasz_hinge_loss(pred: Tensor, target: Tensor) -> Tensor:
     signs = 2.0 * target_flatten - 1.0
     errors = 1.0 - pred_flatten * signs
     errors_sorted, permutation = errors.sort(dim=1, descending=True)
-    batch_index: Tensor = torch.arange(B, device=pred.device).reshape(-1, 1).repeat(1, N).reshape(-1)
+    batch_index: Tensor = (
+        torch.arange(B, device=pred.device).reshape(-1, 1).repeat(1, N).reshape(-1)
+    )
     target_sorted: Tensor = target_flatten[batch_index, permutation.view(-1)]
     target_sorted = target_sorted.view(B, N)
     target_sorted_sum: Tensor = target_sorted.sum(1, keepdim=True)

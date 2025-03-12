@@ -28,6 +28,6 @@ exclude = '''
 '''
 
 [tool.ruff.lint.isort]
-known_first_party = ["landslide"]
-force_sort_within_sections = true
+known-first-party = ["landslide"]
+force-sort-within-sections = true
 

@@ -5,29 +5,26 @@
 # based on:
 # https://github.com/zhezh/focalloss/blob/master/focalloss.py
 
-
 from __future__ import annotations
 
 from typing import Optional
 
 import torch
-from torch import nn
-
-
+from torch import nn, Tensor, tensor
 
 from landslide.losses.common import mask_ignore_pixels
-from landslide.torch import one_hot
+from landslide.torch import one_hot, is_tensor, check_shape
 
 
 def focal_loss(
-    pred: torch.Tensor,
-    target: torch.Tensor,
+    pred: Tensor,
+    target: Tensor,
     alpha: Optional[float],
     gamma: float = 2.0,
     reduction: str = "none",
-    weight: Optional[torch.Tensor] = None,
+    weight: Optional[Tensor] = None,
     ignore_index: Optional[int] = -100,
-) -> torch.Tensor:
+) -> Tensor:
     r"""Criterion that computes Focal loss.
 
     According to :cite:`lin2018focal`, the Focal loss is computed as follows:
@@ -65,14 +62,21 @@ def focal_loss(
         >>> output.backward()
 
     """
+    check_shape(pred, ["B", "C", "*"])
     out_size = (pred.shape[0],) + pred.shape[2:]
-    assert pred.shape[0] == target.shape[0] and target.shape[1:] == pred.shape[2:], f"Expected target size {out_size}, got {target.shape}"
-    assert pred.device == target.device, f"pred and target must be in the same device. Got: {pred.device} and {target.device}"
+    assert (
+        pred.shape[0] == target.shape[0] and target.shape[1:] == pred.shape[2:]
+    ), f"Expected target size {out_size}, got {target.shape}"
+    assert (
+        pred.device == target.device
+    ), f"pred and target must be in the same device. Got: {pred.device} and {target.device}"
 
     target, target_mask = mask_ignore_pixels(target, ignore_index)
 
     # create the labels one hot tensor
-    target_one_hot: torch.Tensor = one_hot(target, num_classes=pred.shape[1], device=pred.device, dtype=pred.dtype)
+    target_one_hot: Tensor = one_hot(
+        target, num_classes=pred.shape[1], device=pred.device, dtype=pred.dtype
+    )
 
     # mask ignore pixels
     if target_mask is not None:
@@ -80,22 +84,32 @@ def focal_loss(
         target_one_hot = target_one_hot * target_mask
 
     # compute softmax over the classes axis
-    log_pred_soft: torch.Tensor = pred.log_softmax(1)
+    log_pred_soft: Tensor = pred.log_softmax(1)
 
     # compute the actual focal loss
-    loss_tmp: torch.Tensor = -torch.pow(1.0 - log_pred_soft.exp(), gamma) * log_pred_soft * target_one_hot
+    loss_tmp: Tensor = (
+        -torch.pow(1.0 - log_pred_soft.exp(), gamma) * log_pred_soft * target_one_hot
+    )
 
     num_of_classes = pred.shape[1]
     broadcast_dims = [-1] + [1] * len(pred.shape[2:])
     if alpha is not None:
-        alpha_fac = torch.tensor([1 - alpha] + [alpha] * (num_of_classes - 1), dtype=loss_tmp.dtype, device=loss_tmp.device)
+        alpha_fac = tensor(
+            [1 - alpha] + [alpha] * (num_of_classes - 1),
+            dtype=loss_tmp.dtype,
+            device=loss_tmp.device,
+        )
         alpha_fac = alpha_fac.view(broadcast_dims)
         loss_tmp = alpha_fac * loss_tmp
 
     if weight is not None:
-        assert isinstance(weight, torch.Tensor), "weight must be torch.Tensor or None."
-        assert weight.shape[0] == num_of_classes and weight.numel() == num_of_classes, f"weight shape must be (num_of_classes,): ({num_of_classes},), got {weight.shape}"
-        assert weight.device == pred.device, f"weight and pred must be in the same device. Got: {weight.device} and {pred.device}"
+        is_tensor(weight, "weight must be Tensor or None.")
+        assert (
+            weight.shape[0] == num_of_classes and weight.numel() == num_of_classes
+        ), f"weight shape must be (num_of_classes,): ({num_of_classes},), got {weight.shape}"
+        assert (
+            weight.device == pred.device
+        ), f"weight and pred must be in the same device. Got: {weight.device} and {pred.device}"
         weight = weight.view(broadcast_dims)
         loss_tmp = weight * loss_tmp
 
@@ -154,30 +168,38 @@ class FocalLoss(nn.Module):
         alpha: Optional[float],
         gamma: float = 2.0,
         reduction: str = "none",
-        weight: Optional[torch.Tensor] = None,
+        weight: Optional[Tensor] = None,
         ignore_index: Optional[int] = -100,
     ) -> None:
         super().__init__()
         self.alpha: Optional[float] = alpha
         self.gamma: float = gamma
         self.reduction: str = reduction
-        self.weight: Optional[torch.Tensor] = weight
+        self.weight: Optional[Tensor] = weight
         self.ignore_index: Optional[int] = ignore_index
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        return focal_loss(pred, target, self.alpha, self.gamma, self.reduction, self.weight, self.ignore_index)
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+        return focal_loss(
+            pred,
+            target,
+            self.alpha,
+            self.gamma,
+            self.reduction,
+            self.weight,
+            self.ignore_index,
+        )
 
 
 def binary_focal_loss_with_logits(
-    pred: torch.Tensor,
-    target: torch.Tensor,
+    pred: Tensor,
+    target: Tensor,
     alpha: Optional[float] = 0.25,
     gamma: float = 2.0,
     reduction: str = "none",
-    pos_weight: Optional[torch.Tensor] = None,
-    weight: Optional[torch.Tensor] = None,
+    pos_weight: Optional[Tensor] = None,
+    weight: Optional[Tensor] = None,
     ignore_index: Optional[int] = -100,
-) -> torch.Tensor:
+) -> Tensor:
     r"""Criterion that computes Binary Focal loss.
 
     According to :cite:`lin2018focal`, the Focal loss is computed as follows:
@@ -217,10 +239,16 @@ def binary_focal_loss_with_logits(
         >>> output.backward()
 
     """
-    assert pred.shape == target.shape, f"Expected target size {pred.shape}, got {target.shape}"
-    assert pred.device == target.device, f"pred and target must be in the same device. Got: {pred.device} and {target.device}"
-    log_probs_pos: torch.Tensor = nn.functional.logsigmoid(pred)
-    log_probs_neg: torch.Tensor = nn.functional.logsigmoid(-pred)
+    check_shape(pred, ["B", "C", "*"])
+    assert (
+        pred.shape == target.shape
+    ), f"Expected target size {pred.shape}, got {target.shape}"
+    assert (
+        pred.device == target.device
+    ), f"pred and target must be in the same device. Got: {pred.device} and {target.device}"
+
+    log_probs_pos: Tensor = nn.functional.logsigmoid(pred)
+    log_probs_neg: Tensor = nn.functional.logsigmoid(-pred)
 
     target, target_mask = mask_ignore_pixels(target, ignore_index)
 
@@ -229,8 +257,8 @@ def binary_focal_loss_with_logits(
         log_probs_neg = log_probs_neg * target_mask
         log_probs_pos = log_probs_pos * target_mask
 
-    pos_term: torch.Tensor = -log_probs_neg.exp().pow(gamma) * target * log_probs_pos
-    neg_term: torch.Tensor = -log_probs_pos.exp().pow(gamma) * (1.0 - target) * log_probs_neg
+    pos_term: Tensor = -log_probs_neg.exp().pow(gamma) * target * log_probs_pos
+    neg_term: Tensor = -log_probs_pos.exp().pow(gamma) * (1.0 - target) * log_probs_neg
     if alpha is not None:
         pos_term = alpha * pos_term
         neg_term = (1.0 - alpha) * neg_term
@@ -238,18 +266,27 @@ def binary_focal_loss_with_logits(
     num_of_classes = pred.shape[1]
     broadcast_dims = [-1] + [1] * len(pred.shape[2:])
     if pos_weight is not None:
-        assert isinstance(pos_weight, torch.Tensor),  "pos_weight must be torch.Tensor or None."
-        assert pos_weight.shape[0] == num_of_classes and pos_weight.numel() == num_of_classes, f"pos_weight shape must be (num_of_classes,): ({num_of_classes},), got {pos_weight.shape}"
-        assert pos_weight.device == pred.device, f"pos_weight and pred must be in the same device. Got: {pos_weight.device} and {pred.device}"
+        is_tensor(pos_weight, "pos_weight must be Tensor or None.")
+        assert (
+            pos_weight.shape[0] == num_of_classes
+            and pos_weight.numel() == num_of_classes
+        ), f"pos_weight shape must be (num_of_classes,): ({num_of_classes},), got {pos_weight.shape}"
+        assert (
+            pos_weight.device == pred.device
+        ), f"pos_weight and pred must be in the same device. Got: {pos_weight.device} and {pred.device}"
 
         pos_weight = pos_weight.view(broadcast_dims)
         pos_term = pos_weight * pos_term
 
-    loss_tmp: torch.Tensor = pos_term + neg_term
+    loss_tmp: Tensor = pos_term + neg_term
     if weight is not None:
-        assert isinstance(weight, torch.Tensor), "weight must be torch.Tensor or None."
-        assert weight.shape[0] == num_of_classes and weight.numel() == num_of_classes, f"weight shape must be (num_of_classes,): ({num_of_classes},), got {weight.shape}"
-        assert weight.device == pred.device, f"weight and pred must be in the same device. Got: {weight.device} and {pred.device}"
+        is_tensor(weight, "weight must be Tensor or None.")
+        assert (
+            weight.shape[0] == num_of_classes and weight.numel() == num_of_classes
+        ), f"weight shape must be (num_of_classes,): ({num_of_classes},), got {weight.shape}"
+        assert (
+            weight.device == pred.device
+        ), f"weight and pred must be in the same device. Got: {weight.device} and {pred.device}"
         weight = weight.view(broadcast_dims)
         loss_tmp = weight * loss_tmp
 
@@ -310,19 +347,26 @@ class BinaryFocalLossWithLogits(nn.Module):
         alpha: Optional[float],
         gamma: float = 2.0,
         reduction: str = "none",
-        pos_weight: Optional[torch.Tensor] = None,
-        weight: Optional[torch.Tensor] = None,
+        pos_weight: Optional[Tensor] = None,
+        weight: Optional[Tensor] = None,
         ignore_index: Optional[int] = -100,
     ) -> None:
         super().__init__()
         self.alpha: Optional[float] = alpha
         self.gamma: float = gamma
         self.reduction: str = reduction
-        self.pos_weight: Optional[torch.Tensor] = pos_weight
-        self.weight: Optional[torch.Tensor] = weight
+        self.pos_weight: Optional[Tensor] = pos_weight
+        self.weight: Optional[Tensor] = weight
         self.ignore_index: Optional[int] = ignore_index
 
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
         return binary_focal_loss_with_logits(
-            pred, target, self.alpha, self.gamma, self.reduction, self.pos_weight, self.weight, self.ignore_index
+            pred,
+            target,
+            self.alpha,
+            self.gamma,
+            self.reduction,
+            self.pos_weight,
+            self.weight,
+            self.ignore_index,
         )
