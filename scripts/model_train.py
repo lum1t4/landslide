@@ -14,6 +14,7 @@ from landslide.data import LandslideDataset, dataloader, load_dataset
 from landslide.dtypes import IterableSimpleNamespace
 from landslide.utils import yaml_load
 from landslide.trackers import Tracker, WandbTracker
+from landslide.losses import LovaszHingeLoss, FocalLoss, DiceLoss
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -92,13 +93,53 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
 
 def build_criterion(model, hyp, data, device):
     nc = data.get('nc', 1)
-    if hyp.criterion == "weighted_binary_cross_entropy":
-        pos_weight = torch.tensor(data['pos_weights']).reshape(nc, 1, 1).to(device)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    
+    # Create a dictionary of available loss functions
+    loss_fns = {
+        "binary_cross_entropy": lambda: nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor(data['pos_weights']).reshape(nc, 1, 1).to(device) 
+            if hyp.criterion.startswith("weighted_binary_cross_entropy") else None
+        ),
+        "lovasz_loss": lambda: LovaszHingeLoss(per_image=True, ignore=hyp.ignore_index),
+        "dice_loss": lambda: DiceLoss(smooth=1.0),
+        "focal_loss": lambda: FocalLoss(alpha=1.0, gamma=2.0)
+    }
+    
+    # Check if the criterion is a composite loss
+    if "+" in hyp.criterion:
+        loss_names = hyp.criterion.split("+")
+        losses = []
+        
+        for loss_name in loss_names:
+            loss_name = loss_name.strip()
+            if loss_name in loss_fns:
+                losses.append(loss_fns[loss_name]())
+            else:
+                logger.warning(f"Unknown loss function: {loss_name}, using BCEWithLogitsLoss instead")
+                losses.append(nn.BCEWithLogitsLoss())
+        
+        # Create a composite loss function
+        def composite_loss(preds, targets):
+            total_loss = 0
+            for loss_fn in losses:
+                total_loss += loss_fn(preds, targets)
+            return total_loss / len(losses)  # Average the losses
+        
+        return composite_loss
     else:
-        criterion = nn.BCEWithLogitsLoss()
-
-    return criterion
+        # Single loss function
+        if hyp.criterion == "weighted_binary_cross_entropy":
+            pos_weight = torch.tensor(data['pos_weights']).reshape(nc, 1, 1).to(device)
+            return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        elif hyp.criterion == "lovasz_loss":
+            return LovaszHingeLoss(per_image=True, ignore=hyp.ignore_index)
+        elif hyp.criterion == "dice_loss":
+            return DiceLoss(smooth=1.0)
+        elif hyp.criterion == "focal_loss":
+            return FocalLoss(alpha=1.0, gamma=2.0)
+        else:
+            logger.warning(f"Unknown criterion: {hyp.criterion}, using BCEWithLogitsLoss instead")
+            return nn.BCEWithLogitsLoss()
 
 
 def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):

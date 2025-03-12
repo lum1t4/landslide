@@ -116,4 +116,28 @@ class FocalLoss(nn.Module):
         pt = torch.exp(-loss)  # Convert BCE loss to probability
         focal_loss = alpha * (1 - pt) ** gamma * loss  # Apply focal adjustment
         return focal_loss.mean()
-    
+
+
+class DiceLoss(nn.Module):
+    def __init__(self, smooth: float = 1.0, reduction: str = 'mean'):
+        super(DiceLoss, self).__init__()
+        self.smooth = smooth
+        self.reduction = reduction
+        
+    def forward(self, inputs, targets):
+        # Apply sigmoid to get probabilities
+        inputs = torch.sigmoid(inputs)
+        
+        # Flatten the inputs and targets
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        
+        # Calculate intersection and union
+        intersection = (inputs * targets).sum()
+        total = inputs.sum() + targets.sum()
+        
+        # Calculate Dice coefficient
+        dice_coeff = (2. * intersection + self.smooth) / (total + self.smooth)
+        
+        # Return Dice loss
+        return 1 - dice_coeff
