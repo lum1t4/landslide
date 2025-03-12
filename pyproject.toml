@@ -5,7 +5,7 @@ build-backend = "flit_core.buildapi"
 [project]
 name = "landslide"
 version = "0.0.1"
-description = "Lumita supervision library"
+description = "Landslide project for Big Data course"
 authors = [
   { name = "Gianluca Calò" },
 ]
