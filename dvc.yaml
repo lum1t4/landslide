@@ -1,30 +1,30 @@
 stages:
   L4S:
     cmd:
-      - python scripts/data_prepare_L4S.py --src dataset/raw/L4S --dst dataset/processed/L4S
-      - python scripts/data_prepare_config.py --dataset dataset/processed/L4S
+      - python scripts/data_prepare_L4S.py --src data/raw/L4S --dst data/processed/L4S
+      - python scripts/data_prepare_config.py --dataset data/processed/L4S
     deps:
       - scripts/data_prepare_L4S.py
-      - dataset/raw/L4S
+      - data/raw/L4S
     outs:
-      - dataset/processed/L4S
+      - data/processed/L4S
   A19:
     cmd:
-      - python scripts/data_prepare_split.py --src dataset/raw/A19 --dst dataset/interim/A19
-      - python scripts/data_prepare_png.py --src dataset/interim/A19 --dst dataset/processed/A19
-      - python scripts/data_prepare_config.py --dataset dataset/processed/A19
+      - python scripts/data_prepare_split.py --src data/raw/A19 --dst data/interim/A19
+      - python scripts/data_prepare_png.py --src data/interim/A19 --dst data/processed/A19
+      - python scripts/data_prepare_config.py --dataset data/processed/A19
     deps:
       - scripts/data_prepare_split.py
       - scripts/data_prepare_png.py
-      - dataset/raw/A19
+      - data/raw/A19
     outs:
-      - dataset/processed/A19
+      - data/processed/A19
   Ischia:
     cmd:
-      - python scripts/data_prepare_png.py --src dataset/raw/Ischia --dst dataset/processed/Ischia
-      - python scripts/data_prepare_config.py --dataset dataset/processed/Ischia
+      - python scripts/data_prepare_png.py --src data/raw/Ischia --dst data/processed/Ischia
+      - python scripts/data_prepare_config.py --dataset data/processed/Ischia
     deps:
       - scripts/data_prepare_png.py
-      - dataset/raw/Ischia
+      - data/raw/Ischia
     outs:
-      - dataset/processed/Ischia
+      - data/processed/Ischia

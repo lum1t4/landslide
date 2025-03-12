@@ -222,7 +222,7 @@ def dataloader(
     )
 
 
-def load_dataset(name: str, root: Path = Path('./dataset/processed/')):
+def load_dataset(name: str, root: Path = Path('./data/processed/')):
     descriptor = root / name / 'config.yaml'
     assert descriptor.exists(), f"Dataset descriptor not found in {descriptor.parent.as_posix()}"
     content = yaml_load(descriptor)

@@ -2,10 +2,10 @@ schema: '2.0'
 stages:
   L4S:
     cmd:
-    - python scripts/data_prepare_L4S.py --src dataset/raw/L4S --dst dataset/processed/L4S
-    - python scripts/data_prepare_config.py --dataset dataset/processed/L4S
+    - python scripts/data_prepare_L4S.py --src data/raw/L4S --dst data/processed/L4S
+    - python scripts/data_prepare_config.py --dataset data/processed/L4S
     deps:
-    - path: dataset/raw/L4S
+    - path: data/raw/L4S
       hash: md5
       md5: f8e89f3d5426dab9d1fa2afe4a63d861.dir
       size: 8987996168
@@ -15,18 +15,18 @@ stages:
       md5: 5ab365408a4dfefc0234bdf1840501de
       size: 2763
     outs:
-    - path: dataset/processed/L4S
+    - path: data/processed/L4S
       hash: md5
       md5: 757a73364215b71076807eab4576b478.dir
       size: 154708981
       nfiles: 9689
   A19:
     cmd:
-    - python scripts/data_prepare_split.py --src dataset/raw/A19 --dst dataset/interim/A19
-    - python scripts/data_prepare_png.py --src dataset/interim/A19 --dst dataset/processed/A19
-    - python scripts/data_prepare_config.py --dataset dataset/processed/A19
+    - python scripts/data_prepare_split.py --src data/raw/A19 --dst data/interim/A19
+    - python scripts/data_prepare_png.py --src data/interim/A19 --dst data/processed/A19
+    - python scripts/data_prepare_config.py --dataset data/processed/A19
     deps:
-    - path: dataset/raw/A19
+    - path: data/raw/A19
       hash: md5
       md5: c04323c86a1413daa7233eb407d56e83.dir
       size: 1068435082
@@ -40,17 +40,17 @@ stages:
       md5: 3a3e422e6df159966f947f5327ac4526
       size: 1949
     outs:
-    - path: dataset/processed/A19
+    - path: data/processed/A19
       hash: md5
       md5: 35ea1e133499f6b88a9114134d0552cc.dir
       size: 358068479
       nfiles: 1277
   Ischia:
     cmd:
-    - python scripts/data_prepare_png.py --src dataset/raw/Ischia --dst dataset/processed/Ischia
-    - python scripts/data_prepare_config.py --dataset dataset/processed/Ischia
+    - python scripts/data_prepare_png.py --src data/raw/Ischia --dst data/processed/Ischia
+    - python scripts/data_prepare_config.py --dataset data/processed/Ischia
     deps:
-    - path: dataset/raw/Ischia
+    - path: data/raw/Ischia
       hash: md5
       md5: 15838c7e8559c2d56c27545b1542a974.dir
       size: 1280519469
@@ -60,7 +60,7 @@ stages:
       md5: ca1add361ba7a0c8d75c3e607ebb08f8
       size: 2244
     outs:
-    - path: dataset/processed/Ischia
+    - path: data/processed/Ischia
       hash: md5
       md5: 8b25a98b9f3a651f180a66ff086c3c5d.dir
       size: 333284489
