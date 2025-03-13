@@ -1,12 +1,11 @@
+from .dice import DiceLoss, dice_loss
 from .focal import (
-    FocalLoss,
     BinaryFocalLossWithLogits,
+    FocalLoss,
     binary_focal_loss_with_logits,
     focal_loss,
 )
-from .lovasz_hinge import LovaszHingeLoss, lovasz_hinge
-from .dice import DiceLoss, dice_loss
-
+from .lovasz_hinge import LovaszHingeLoss, lovasz_hinge_loss
 
 __all__ = [
     "FocalLoss",
@@ -14,7 +13,7 @@ __all__ = [
     "binary_focal_loss_with_logits",
     "focal_loss",
     "LovaszHingeLoss",
-    "lovasz_hinge",
+    "lovasz_hinge_loss",
     "DiceLoss",
     "dice_loss",
 ]

@@ -10,10 +10,10 @@ from __future__ import annotations
 from typing import Optional
 
 import torch
-from torch import nn, Tensor, tensor
+from torch import Tensor, nn, tensor
 
 from landslide.losses.common import mask_ignore_pixels
-from landslide.torch import one_hot, is_tensor, check_shape
+from landslide.torch import check_shape, is_tensor, one_hot
 
 
 def focal_loss(
@@ -346,7 +346,7 @@ class BinaryFocalLossWithLogits(nn.Module):
         self,
         alpha: Optional[float],
         gamma: float = 2.0,
-        reduction: str = "none",
+        reduction: str = "mean",
         pos_weight: Optional[Tensor] = None,
         weight: Optional[Tensor] = None,
         ignore_index: Optional[int] = -100,

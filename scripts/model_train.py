@@ -1,18 +1,19 @@
 from datetime import datetime
 import io
+import logging
 from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
-import logging
 
-from landslide.model import UNet
-from landslide.torch import init_seeds
 from landslide.data import LandslideDataset, dataloader, load_dataset
 from landslide.dtypes import IterableSimpleNamespace
+from landslide.losses import BinaryFocalLossWithLogits, DiceLoss, LovaszHingeLoss
+from landslide.model import UNet
+from landslide.torch import device_memory_used, init_seeds
 from landslide.trackers import Tracker
-from landslide.losses import LovaszHingeLoss, BinaryFocalLossWithLogits
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -22,23 +23,38 @@ logger = logging.getLogger(__name__)
 def train_epoch(model, hyp, loader, epoch, criterion, device, optimizer):
     running_loss = 0.0
 
-    progress = tqdm.tqdm(enumerate(loader), total=len(loader), desc="Training")
-    for i, (img, labels) in progress:
-        img = img.to(device, non_blocking=True)
+    s = ("\n" + "%11s" * 5) % ("Epoch", "GPU_mem", "loss", "Instances", "Size")
+    print(s)
+    progress = tqdm.tqdm(enumerate(loader), total=len(loader))
+    for i, (imgs, targets) in progress:
+        imgs = imgs.to(device, non_blocking=True)
         optimizer.zero_grad()
         # Forward
-        preds = model(img)  # (B, C, H, W) where C = number of classes
-        if preds.shape[-2:] != labels.shape[-2:]:
+        preds = model(imgs)  # (B, C, H, W) where C = number of classes
+        if preds.shape[-2:] != targets.shape[-2:]:
             preds = nn.functional.interpolate(
-                preds, size=labels.shape[-2:], mode="bilinear", align_corners=False
+                preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
             )
 
-        loss = criterion(preds, labels.to(device, dtype=torch.float32))
+        loss = criterion(preds, targets.to(device, dtype=torch.float32))
         loss.backward()
         optimizer.step()
-        running_loss += loss.item()
 
-    return {"train/loss": running_loss / len(loader)}
+        running_loss = (running_loss * i + loss.item()) / (i + 1)
+        mem = f"{device_memory_used(device):.3g}G"
+
+        progress.set_description(
+            ("%11s" * 2 + "%11.4g" * 3)
+            % (
+                f"{epoch + 1}/{hyp.epochs}",
+                mem,
+                running_loss,
+                targets.shape[0],
+                imgs.shape[-1],
+            )
+        )
+
+    return {"train/loss": running_loss}
 
 
 def postprocess(preds: torch.Tensor, hyp: IterableSimpleNamespace):
@@ -110,6 +126,10 @@ def build_criterion(model, hyp, data, device):
         case "weighted_binary_cross_entropy":
             pos_weight = torch.tensor(data["pos_weights"]).reshape(nc, 1, 1).to(device)
             return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        case "lovasz_loss":
+            return LovaszHingeLoss()
+        case "dice_loss":
+            return DiceLoss()
         case _:
             logger.warning(
                 f"Unknown criterion: {hyp.criterion}, using BCEWithLogitsLoss instead"
@@ -141,7 +161,7 @@ def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
     # Use no extra workers for CPU/MPS devices.
     workers = 0 if device.type in {"cpu", "mps"} else hyp.workers
 
-    criterion = build_criterion(model, hyp, data)
+    criterion = build_criterion(model, hyp, data, device)
 
     # Define optimization components
     optimizer = torch.optim.Adam(
@@ -166,7 +186,7 @@ def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
         do_rescale=True,
     )
 
-    print(
+    logger.info(
         f"Training on {len(train_set)} samples with imgsz {hyp.image_sz} "
         f"and validating on {len(valid_set)} samples."
     )
@@ -184,7 +204,6 @@ def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
     if hyp.resume:
         checkpoint = torch.load(weights, map_location="cpu")
         model.load_state_dict(checkpoint["model"])
-        model.to(device)
         optimizer.load_state_dict(checkpoint["optimizer"])
         start_epoch = checkpoint["epoch"] + 1
         if "metrics" in checkpoint and hyp.monitor in checkpoint["metrics"]:
@@ -192,6 +211,7 @@ def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
         best_epoch = start_epoch
         logger.info(f"Resuming training from epoch {start_epoch}")
 
+    model = model.to(device)
     for epoch in range(start_epoch, hyp.epochs):
         logger.info(f"Epoch {epoch+1}/{hyp.epochs}")
         # If you want training metrics (in addition to loss) pass compute_metrics=True.

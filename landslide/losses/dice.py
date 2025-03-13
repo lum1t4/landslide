@@ -3,12 +3,10 @@ from __future__ import annotations
 from typing import Optional
 
 import torch
-from torch import nn
+from torch import Tensor, nn
 
-from torch import Tensor
 from landslide.losses.common import mask_ignore_pixels
-from landslide.torch import one_hot, is_tensor
-
+from landslide.torch import is_tensor, one_hot
 
 # based on:
 # https://github.com/kevinzakka/pytorch-goodies/blob/master/losses.py

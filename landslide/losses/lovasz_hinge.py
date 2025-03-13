@@ -55,7 +55,7 @@ def lovasz_hinge_loss(pred: Tensor, target: Tensor) -> Tensor:
     """
     check_shape(pred, ["B", "1", "H", "W"])
 
-    check_shape(target, ["B", "H", "W"])
+    check_shape(target, ["B", "1", "H", "W"])
 
     if not pred.shape[-2:] == target.shape[-2:]:
         raise ValueError(
