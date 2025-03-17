@@ -1,4 +1,6 @@
 from datetime import datetime
+from functools import partial
+import gc
 import io
 import logging
 from pathlib import Path
@@ -8,11 +10,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
 
-from landslide.data import LandslideDataset, dataloader, load_dataset
+from landslide.data import LandslideDataset, dataloader, parse_dataset
 from landslide.dtypes import IterableSimpleNamespace
-from landslide.losses import BinaryFocalLossWithLogits, DiceLoss, LovaszHingeLoss
-from landslide.model import UNet
-from landslide.torch import device_memory_used, init_seeds
+from landslide.losses import AutoCriterion
+from landslide.metrics import BinaryConfusionMatrix
+from landslide.model import load_model
+from landslide.torch import device_memory_clear, device_memory_used, init_seeds
 from landslide.trackers import Tracker
 
 # Configure logger
@@ -20,14 +23,20 @@ logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO)
 
 
-def train_epoch(model, hyp, loader, epoch, criterion, device, optimizer):
+def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, optimizer):
     running_loss = 0.0
+    n_objectives = len(criterion)
+    # trunacate the names longer than 11 characters to 8 + "..."
+    names = [name[:5] + "..." if len(name) > 11 else name for name in criterion.names]
+    print(
+        ("\n" + "%11s" * (5 + n_objectives))
+        % ("Epoch", "GPU_mem", "Loss", *names, "Instances", "Size")
+    )
+    mean_losses = torch.zeros(n_objectives, device=device)
 
-    s = ("\n" + "%11s" * 5) % ("Epoch", "GPU_mem", "loss", "Instances", "Size")
-    print(s)
     progress = tqdm.tqdm(enumerate(loader), total=len(loader))
     for i, (imgs, targets) in progress:
-        imgs = imgs.to(device, non_blocking=True)
+        imgs = imgs.to(device, non_blocking=True).float()
         optimizer.zero_grad()
         # Forward
         preds = model(imgs)  # (B, C, H, W) where C = number of classes
@@ -36,25 +45,29 @@ def train_epoch(model, hyp, loader, epoch, criterion, device, optimizer):
                 preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
             )
 
-        loss = criterion(preds, targets.to(device, dtype=torch.float32))
-        loss.backward()
+        aggr_loss, losses = criterion(preds, targets.to(device, dtype=torch.float32))
+        aggr_loss.backward()
         optimizer.step()
-
-        running_loss = (running_loss * i + loss.item()) / (i + 1)
+        running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
+        mean_losses = (mean_losses * i + losses) / (i + 1)
         mem = f"{device_memory_used(device):.3g}G"
 
         progress.set_description(
-            ("%11s" * 2 + "%11.4g" * 3)
+            ("%11s" * 2 + "%11.4g" * (n_objectives + 3))
             % (
                 f"{epoch + 1}/{hyp.epochs}",
                 mem,
                 running_loss,
+                *mean_losses.tolist(),
                 targets.shape[0],
                 imgs.shape[-1],
             )
         )
 
-    return {"train/loss": running_loss}
+    return {
+        f"train/loss_{name}": loss.item()
+        for name, loss in zip(criterion.names, mean_losses)
+    }
 
 
 def postprocess(preds: torch.Tensor, hyp: IterableSimpleNamespace):
@@ -73,73 +86,78 @@ def postprocess(preds: torch.Tensor, hyp: IterableSimpleNamespace):
 @torch.inference_mode()
 def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
     running_loss = 0.0
-    tp, fp, fn, tn = 0.0, 0.0, 0.0, 0.0
-    progress = tqdm.tqdm(enumerate(loader), total=len(loader), desc="Validation")
-    for i, (img, labels) in progress:
-        img = img.to(device, non_blocking=True)
-        labels = labels.to(
+
+    n_objectives = len(criterion)
+    print(("\n" + "%11s" * 4) % ("Precision", "Recall", "Accuracy", "F1"))
+    mean_losses = torch.zeros(n_objectives, device=device)
+
+    confmat = BinaryConfusionMatrix()
+    confmat.to(device)
+
+    progress = tqdm.tqdm(enumerate(loader), total=len(loader))
+    for i, (imgs, targets) in progress:
+        imgs = imgs.to(device, non_blocking=True)
+        targets = targets.to(
             device, non_blocking=True, dtype=torch.float32
         )  # TODO: remove dtype
-        preds = model(img)  # (B, C, H, W) where C = number of classes
-        if preds.shape[-2:] != labels.shape[-2:]:
+        preds = model(imgs)  # (B, C, H, W) where C = number of classes
+        if preds.shape[-2:] != targets.shape[-2:]:
             preds = F.interpolate(
-                preds, size=labels.shape[-2:], mode="bilinear", align_corners=False
+                preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
             )
-        loss = criterion(preds, labels)
-        running_loss += loss.item()
+        aggr_loss, losses = criterion(preds, targets)
+        running_loss += aggr_loss.item()
         mask = postprocess(preds, hyp)
-        labels = labels.to(torch.uint8)
-        tp += ((mask == 1) & (labels == 1)).sum().item()
-        fp += ((mask == 1) & (labels == 0)).sum().item()
-        fn += ((mask == 0) & (labels == 1)).sum().item()
-        tn += ((mask == 0) & (labels == 0)).sum().item()
+        targets = targets.long()
+        confmat.update(mask, targets)
+        running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
+        mean_losses = (mean_losses * i + losses) / (i + 1)
 
-    avg_loss = running_loss / len(loader)
-    epsilon = 1e-7
-    precision = tp / (tp + fp + epsilon)
-    recall = tp / (tp + fn + epsilon)
-    accuracy = (tp + tn) / (tp + tn + fp + fn + epsilon)
-    iou = tp / (tp + fp + fn + epsilon)
-    f1 = 2 * precision * recall / (precision + recall + epsilon)
+        # update description with conf matrix
+        progress.set_description(("%11.4g" * 4) % tuple(confmat.metrics().values()))
 
-    print(f"conf matrix: tp={tp}, fp={fp}, fn={fn}, tn={tn}")
-    metrics = {
-        "valid/loss": avg_loss,
-        "valid/Precision": precision,
-        "valid/Recall": recall,
-        "valid/F1": f1,
-        "valid/IoU": iou,
-        "valid/Accuracy": accuracy,
-    }
+    metrics = {"valid/loss": running_loss / len(loader)}
+    metrics = {**metrics, **confmat.metrics(prefix="valid/")}
+    for name, loss in zip(criterion.names, mean_losses):
+        metrics[f"valid/{name}"] = loss.item()
+
     return metrics
 
 
-def build_criterion(model, hyp, data, device):
-    nc = data.get("nc", 1)
-    match hyp.criterion:
-        case "binary_cross_entropy":
-            return nn.BCEWithLogitsLoss()
-        case "focal_loss":
-            return BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0)
-        case "lovasz_hinge_loss":
-            return LovaszHingeLoss()
-        case "weighted_binary_cross_entropy":
-            pos_weight = torch.tensor(data["pos_weights"]).reshape(nc, 1, 1).to(device)
-            return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        case "lovasz_loss":
-            return LovaszHingeLoss()
-        case "dice_loss":
-            return DiceLoss()
-        case _:
-            logger.warning(
-                f"Unknown criterion: {hyp.criterion}, using BCEWithLogitsLoss instead"
-            )
-            return nn.BCEWithLogitsLoss()
+def load_dataset(data: dict, hyp: dict):
+    key = "image_sz"
+    image_sz = hyp.get(key, 128)
+    key = "mask_sz"
+    mask_sz = hyp.get(key, 128)
+    key = "normalize"
+    if key in hyp:
+        normalize = hyp.get(key, False)
+        mean = data.get("mean", [0.485, 0.456, 0.406])
+        std = data.get("std", [0.229, 0.224, 0.225])
+
+        dataset = partial(
+            LandslideDataset,
+            mean=mean,
+            std=std,
+            image_sz=image_sz,
+            mask_sz=mask_sz,
+            do_normalize=normalize,
+        )
+        train_set = dataset(data["train"])
+        valid_set = dataset(data[hyp.val], do_rescale=True)
+
+        return train_set, valid_set
+    else:
+        raise ValueError(f"Missing {key} in hyperparameters")
 
 
-def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
+def train(hyp, train_data, valid_data, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     pretrained = False
+
+    data = parse_dataset(hyp.dataset)  # dataset description
+    model = load_model(hyp.model, data, hyp)
+    save_dir = Path(hyp.save_dir)
 
     device = torch.device(hyp.device)
 
@@ -160,38 +178,19 @@ def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
 
     # Use no extra workers for CPU/MPS devices.
     workers = 0 if device.type in {"cpu", "mps"} else hyp.workers
-
-    criterion = build_criterion(model, hyp, data, device)
+    criterion = AutoCriterion(hyp.criterion, model, hyp, data, device)
 
     # Define optimization components
     optimizer = torch.optim.Adam(
         model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay
     )
 
-    train_set = LandslideDataset(
-        data["train"],
-        mean=data["mean"],
-        std=data["std"],
-        image_sz=hyp.image_sz,
-        mask_sz=hyp.mask_sz,
-        do_normalize=True,
-    )
-    valid_set = LandslideDataset(
-        data[hyp.val],
-        mean=data["mean"],
-        std=data["std"],
-        image_sz=hyp.image_sz,
-        mask_sz=hyp.mask_sz,
-        do_normalize=True,
-        do_rescale=True,
-    )
-
     logger.info(
-        f"Training on {len(train_set)} samples with imgsz {hyp.image_sz} "
-        f"and validating on {len(valid_set)} samples."
+        f"Training on {len(train_data)} samples with imgsz {hyp.image_sz} "
+        f"and validating on {len(valid_data)} samples."
     )
-    train_loader = dataloader(train_set, hyp.batch, workers, hyp.image_sz, mode="train")
-    valid_loader = dataloader(valid_set, hyp.batch, workers, hyp.image_sz, mode="valid")
+    train_loader = dataloader(train_data, hyp.batch, workers, mode="train")
+    valid_loader = dataloader(valid_data, hyp.batch, workers, mode="valid")
 
     start_epoch = 0
 
@@ -222,6 +221,9 @@ def train(model, hyp, data, save_dir, tracker: Tracker = Tracker):
 
         model.eval()
         valid_metrics = valid_epoch(model, hyp, valid_loader, epoch, criterion, device)
+        device_memory_clear(device)
+        gc.collect()
+
         metrics = {**train_metrics, **valid_metrics}
         tracker.log(metrics, step=epoch)
 
@@ -289,12 +291,6 @@ def model_checkpointing(
         tracker.log_model(last, aliases=aliases)
 
 
-def load_model(model: str, data: dict, hyp: IterableSimpleNamespace):
-    # Load the model
-    # TODO: Implement model loading
-    return UNet(nc=1, ch=3)
-
-
 if __name__ == "__main__":
     hyp = dict(
         model="unet",
@@ -311,7 +307,7 @@ if __name__ == "__main__":
         deterministic=True,
         batch=32,
         workers=8,
-        monitor="valid/F1",
+        monitor="valid/F1-Score",
         patience=10,
         mode="max",
         val="valid",
@@ -323,10 +319,8 @@ if __name__ == "__main__":
         lr=1e-3,
         device="mps:0",
         tracker="wandb",
+        save_dir="./runs",
     )
 
     hyp = IterableSimpleNamespace(**hyp)
-    data = load_dataset(hyp.dataset)  # dataset description
-    model = load_model(hyp.model, data, hyp)
-
-    train(model, hyp, data, save_dir=Path("./runs"))
+    train(hyp)

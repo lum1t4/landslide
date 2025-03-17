@@ -1,30 +1,37 @@
 stages:
   L4S:
     cmd:
+      - unzip -o data/raw/L4S.zip -d data/raw
       - python scripts/data_prepare_L4S.py --src data/raw/L4S --dst data/processed/L4S
       - python scripts/data_prepare_config.py --dataset data/processed/L4S
+      - rm -rf data/raw/L4S
     deps:
       - scripts/data_prepare_L4S.py
-      - data/raw/L4S
+      - data/raw/L4S.zip
     outs:
       - data/processed/L4S
   A19:
     cmd:
+      - unzip -o data/raw/A19.zip -d data/raw
       - python scripts/data_prepare_split.py --src data/raw/A19 --dst data/interim/A19
       - python scripts/data_prepare_png.py --src data/interim/A19 --dst data/processed/A19
+      - rm -rf data/interim/A19
       - python scripts/data_prepare_config.py --dataset data/processed/A19
+      - rm -rf data/raw/A19
     deps:
       - scripts/data_prepare_split.py
       - scripts/data_prepare_png.py
-      - data/raw/A19
+      - data/raw/A19.zip
     outs:
       - data/processed/A19
   Ischia:
     cmd:
+      - unzip -o data/raw/Ischia.zip -d data/raw
       - python scripts/data_prepare_png.py --src data/raw/Ischia --dst data/processed/Ischia
       - python scripts/data_prepare_config.py --dataset data/processed/Ischia
+      - rm -rf data/raw/Ischia
     deps:
       - scripts/data_prepare_png.py
-      - data/raw/Ischia
+      - data/raw/Ischia.zip
     outs:
       - data/processed/Ischia

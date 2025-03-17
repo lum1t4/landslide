@@ -201,3 +201,52 @@ class DiceLoss(nn.Module):
         return dice_loss(
             pred, target, self.average, self.eps, self.weight, self.ignore_index
         )
+
+
+def binary_dice_loss(pred: Tensor, target: Tensor, eps: float = 1e-8) -> Tensor:
+    """
+    Computes the Dice loss for binary segmentation tasks.
+
+    Args:
+        pred (Tensor): Raw logits tensor of shape (N, 1, H, W).
+        target (Tensor): Ground truth tensor with values in {0, 1} and shape (N, 1, H, W).
+        eps (float): A small constant to avoid division by zero.
+
+    Returns:
+        Tensor: A scalar tensor with the mean dice loss.
+    """
+    # Convert logits to probabilities with sigmoid
+    pred_prob = torch.sigmoid(pred)
+
+    # Compute intersection and union over spatial dimensions for each sample
+    dims = (1, 2, 3)
+    intersection = torch.sum(pred_prob * target, dim=dims)
+    union = torch.sum(pred_prob, dim=dims) + torch.sum(target, dim=dims)
+
+    # Compute dice coefficient per sample and then the loss
+    dice = (2.0 * intersection + eps) / (union + eps)
+    loss = 1 - dice
+
+    # Return the mean loss over the batch
+    return loss.mean()
+
+
+class BinaryDiceLoss(nn.Module):
+    """
+    Binary Dice Loss Module for binary segmentation.
+
+    Example:
+        >>> device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        >>> preds = torch.randn(2, 1, 4, 4, requires_grad=True, device=device).float()
+        >>> targets = torch.randint(0, 2, (2, 1, 4, 4), device=device).float()
+        >>> criterion = BinaryDiceLoss()
+        >>> loss = criterion(preds, targets)
+        >>> loss.backward()
+    """
+
+    def __init__(self, eps: float = 1e-8) -> None:
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+        return binary_dice_loss(pred, target, self.eps)

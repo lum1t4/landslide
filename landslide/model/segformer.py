@@ -4,12 +4,15 @@ Reference:
  - https://arxiv.org/pdf/2105.15203.pdf
  - https://github.com/FrancescoSaverioZuppichini/SegFormer
 """
+
+from dataclasses import dataclass
 import math
+from typing import List, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, List
-from dataclasses import dataclass
+
 
 # ----------------------------
 # Configuration
@@ -39,13 +42,12 @@ class SegformerConfig:
     num_labels = 1
 
 
-
-
 # ----------------------------
 # Basic utilities
 # ----------------------------
 class DropPath(nn.Module):
     """Drop paths (Stochastic Depth)"""
+
     def __init__(self, drop_prob: float = 0.0):
         super().__init__()
         self.drop_prob = drop_prob
@@ -59,14 +61,20 @@ class DropPath(nn.Module):
         random_tensor.floor_()  # binarize
         return x.div(keep_prob) * random_tensor
 
+
 # ----------------------------
 # Patch Embeddings
 # ----------------------------
 class SegformerOverlapPatchEmbeddings(nn.Module):
     def __init__(self, patch_size, stride, in_channels, hidden_size):
         super().__init__()
-        self.proj = nn.Conv2d(in_channels, hidden_size, kernel_size=patch_size, stride=stride,
-                              padding=patch_size // 2)
+        self.proj = nn.Conv2d(
+            in_channels,
+            hidden_size,
+            kernel_size=patch_size,
+            stride=stride,
+            padding=patch_size // 2,
+        )
         self.layer_norm = nn.LayerNorm(hidden_size)
 
     def forward(self, x):
@@ -77,39 +85,68 @@ class SegformerOverlapPatchEmbeddings(nn.Module):
         x = self.layer_norm(x)
         return x, H, W
 
+
 # ----------------------------
 # Efficient Self-Attention
 # ----------------------------
 class SegformerEfficientSelfAttention(nn.Module):
-    def __init__(self, config: SegformerConfig, hidden_size: int, num_attention_heads: int, sr_ratio: int):
+    def __init__(
+        self,
+        config: SegformerConfig,
+        hidden_size: int,
+        num_attention_heads: int,
+        sr_ratio: int,
+    ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
         self.head_dim = hidden_size // num_attention_heads
         self.scale = math.sqrt(self.head_dim)
         self.query = nn.Linear(hidden_size, hidden_size)
-        self.key   = nn.Linear(hidden_size, hidden_size)
+        self.key = nn.Linear(hidden_size, hidden_size)
         self.value = nn.Linear(hidden_size, hidden_size)
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
-            self.sr = nn.Conv2d(hidden_size, hidden_size, kernel_size=sr_ratio, stride=sr_ratio)
+            self.sr = nn.Conv2d(
+                hidden_size, hidden_size, kernel_size=sr_ratio, stride=sr_ratio
+            )
             self.layer_norm = nn.LayerNorm(hidden_size)
 
     def forward(self, x, H, W):
         # x: (B, N, C)
         B, N, C = x.shape
-        q = self.query(x).reshape(B, N, self.num_attention_heads, self.head_dim).permute(0, 2, 1, 3)
+        q = (
+            self.query(x)
+            .reshape(B, N, self.num_attention_heads, self.head_dim)
+            .permute(0, 2, 1, 3)
+        )
         if self.sr_ratio > 1:
             x_ = x.transpose(1, 2).reshape(B, C, H, W)
             x_ = self.sr(x_)
             B, C, H_sr, W_sr = x_.shape
             x_ = x_.flatten(2).transpose(1, 2)
             x_ = self.layer_norm(x_)
-            k = self.key(x_).reshape(B, -1, self.num_attention_heads, self.head_dim).permute(0, 2, 1, 3)
-            v = self.value(x_).reshape(B, -1, self.num_attention_heads, self.head_dim).permute(0, 2, 1, 3)
+            k = (
+                self.key(x_)
+                .reshape(B, -1, self.num_attention_heads, self.head_dim)
+                .permute(0, 2, 1, 3)
+            )
+            v = (
+                self.value(x_)
+                .reshape(B, -1, self.num_attention_heads, self.head_dim)
+                .permute(0, 2, 1, 3)
+            )
         else:
-            k = self.key(x).reshape(B, N, self.num_attention_heads, self.head_dim).permute(0, 2, 1, 3)
-            v = self.value(x).reshape(B, N, self.num_attention_heads, self.head_dim).permute(0, 2, 1, 3)
+            k = (
+                self.key(x)
+                .reshape(B, N, self.num_attention_heads, self.head_dim)
+                .permute(0, 2, 1, 3)
+            )
+            v = (
+                self.value(x)
+                .reshape(B, N, self.num_attention_heads, self.head_dim)
+                .permute(0, 2, 1, 3)
+            )
         attn = (q @ k.transpose(-2, -1)) / self.scale
         attn = attn.softmax(dim=-1)
         attn = self.dropout(attn)
@@ -129,9 +166,10 @@ class SegformerSelfOutput(nn.Module):
         return hidden_states
 
 
-
 class SegformerAttention(nn.Module):
-    def __init__(self, config, hidden_size, num_attention_heads, sequence_reduction_ratio):
+    def __init__(
+        self, config, hidden_size, num_attention_heads, sequence_reduction_ratio
+    ):
         super().__init__()
         self.self = SegformerEfficientSelfAttention(
             config=config,
@@ -183,15 +221,25 @@ class SegformerMixFFN(nn.Module):
         x = self.dropout(x)
         return x
 
+
 # ----------------------------
 # Transformer Block
 # ----------------------------
 class SegformerLayer(nn.Module):
-    def __init__(self, config: SegformerConfig, hidden_size: int, num_attention_heads: int,
-                 sr_ratio: int, mlp_ratio: float, drop_path: float = 0.0):
+    def __init__(
+        self,
+        config: SegformerConfig,
+        hidden_size: int,
+        num_attention_heads: int,
+        sr_ratio: int,
+        mlp_ratio: float,
+        drop_path: float = 0.0,
+    ):
         super().__init__()
         self.layer_norm_1 = nn.LayerNorm(hidden_size)
-        self.attention = SegformerAttention(config, hidden_size, num_attention_heads, sr_ratio)
+        self.attention = SegformerAttention(
+            config, hidden_size, num_attention_heads, sr_ratio
+        )
         self.layer_norm_2 = nn.LayerNorm(hidden_size)
         self.mlp = SegformerMixFFN(config, hidden_size, mlp_ratio)
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
@@ -208,6 +256,7 @@ class SegformerLayer(nn.Module):
         x = self.drop_path(x) + shortcut
         return x
 
+
 # ----------------------------
 # Encoder: Stacked Stages
 # ----------------------------
@@ -215,7 +264,10 @@ class SegformerEncoder(nn.Module):
     def __init__(self, config: SegformerConfig):
         super().__init__()
         self.reshape_last_stage = config.reshape_last_stage
-        drop_path_decays = [x.item() for x in torch.linspace(0, config.drop_path_rate, sum(config.depths))]
+        drop_path_decays = [
+            x.item()
+            for x in torch.linspace(0, config.drop_path_rate, sum(config.depths))
+        ]
 
         # patch embeddings
         embeddings = []
@@ -224,8 +276,8 @@ class SegformerEncoder(nn.Module):
                 SegformerOverlapPatchEmbeddings(
                     config.patch_sizes[i],
                     config.strides[i],
-                    config.num_channels if i == 0 else config.hidden_sizes[i-1],
-                    config.hidden_sizes[i]
+                    config.num_channels if i == 0 else config.hidden_sizes[i - 1],
+                    config.hidden_sizes[i],
                 )
             )
 
@@ -246,30 +298,37 @@ class SegformerEncoder(nn.Module):
                         config.num_attention_heads[i],
                         config.sr_ratios[i],
                         config.mlp_ratios[i],
-                        drop_path=drop_path_decays[cur + j]
+                        drop_path=drop_path_decays[cur + j],
                     )
                 )
             blocks.append(nn.ModuleList(layers))
         self.block = nn.ModuleList(blocks)
-        self.layer_norm = nn.ModuleList([nn.LayerNorm(hs) for hs in config.hidden_sizes])
-
+        self.layer_norm = nn.ModuleList(
+            [nn.LayerNorm(hs) for hs in config.hidden_sizes]
+        )
 
     def forward(self, x):
         B = x.size(0)
         hidden_states = []
-        for i, (embed, blocks, norm) in enumerate(zip(self.patch_embeddings, self.block, self.layer_norm)):
+        for i, (embed, blocks, norm) in enumerate(
+            zip(self.patch_embeddings, self.block, self.layer_norm)
+        ):
             x, H, W = embed(x)
             for blk in blocks:
                 x = blk(x, H, W)
             x = norm(x)
-            if i != len(self.block) - 1 or (i == len(self.block) - 1 and self.reshape_last_stage):
-                x = x.reshape(B, H, W, -1).permute(0,3,1,2).contiguous()
+            if i != len(self.block) - 1 or (
+                i == len(self.block) - 1 and self.reshape_last_stage
+            ):
+                x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
             hidden_states.append(x)
         return hidden_states
+
 
 # ----------------------------
 # Minimal Decode Head for Segmentation
 # ----------------------------
+
 
 class SegformerMLP(nn.Module):
     """
@@ -284,14 +343,14 @@ class SegformerMLP(nn.Module):
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
         hidden_states = self.proj(hidden_states)
         return hidden_states
-    
+
 
 class SegformerDecodeHead(nn.Module):
     def __init__(self, config: SegformerConfig):
         super().__init__()
-        self.linear_c = nn.ModuleList([
-            SegformerMLP(config, input_dim=dim) for dim in config.hidden_sizes
-        ])
+        self.linear_c = nn.ModuleList(
+            [SegformerMLP(config, input_dim=dim) for dim in config.hidden_sizes]
+        )
         # the following 3 layers implement the ConvModule of the original implementation
         self.linear_fuse = nn.Conv2d(
             in_channels=config.decoder_hidden_size * config.num_encoder_blocks,
@@ -303,7 +362,9 @@ class SegformerDecodeHead(nn.Module):
         self.activation = nn.ReLU()
 
         self.dropout = nn.Dropout(config.classifier_dropout_prob)
-        self.classifier = nn.Conv2d(config.decoder_hidden_size, config.num_labels, kernel_size=1)
+        self.classifier = nn.Conv2d(
+            config.decoder_hidden_size, config.num_labels, kernel_size=1
+        )
 
         self.config = config
 
@@ -314,11 +375,15 @@ class SegformerDecodeHead(nn.Module):
         for feat, mlp in zip(features, self.linear_c):
             if self.config.reshape_last_stage is False and feat.ndim == 3:
                 h = w = int(math.sqrt(feat.shape[-1]))
-                feat = feat.reshape(batch_size, h, w, -1).permute(0, 3, 1, 2).contiguous()
+                feat = (
+                    feat.reshape(batch_size, h, w, -1).permute(0, 3, 1, 2).contiguous()
+                )
             h, w = feat.shape[2], feat.shape[3]
             feat = mlp(feat)
             feat = feat.permute(0, 2, 1).reshape(batch_size, -1, h, w)
-            feat = F.interpolate(feat, size=features[0].size()[2:], mode='bilinear', align_corners=False)
+            feat = F.interpolate(
+                feat, size=features[0].size()[2:], mode="bilinear", align_corners=False
+            )
             hidden_states.append(feat)
 
         x = self.linear_fuse(torch.cat(hidden_states[::-1], dim=1))
@@ -350,6 +415,7 @@ class Segformer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
         return self.encoder(x)
+
 
 class SegformerForSemanticSegmentation(nn.Module):
     def __init__(self, config: SegformerConfig):
