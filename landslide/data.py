@@ -12,7 +12,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision.transforms.v2 import functional as F
 
 from landslide.torch import RANK, DistributedEvalSampler, seed_worker
-from landslide.utils import yaml_load
+from landslide.utils import DATA_ROOT, yaml_load
 
 IMG_FORMATS = ["bmp", "jpg", "jpeg", "png", "tif", "tiff", "dng", "webp", "mpo"]
 
@@ -228,7 +228,7 @@ def dataloader(
     )
 
 
-def parse_dataset(name: str, root: Path = Path("./data/processed/")):
+def parse_dataset(name: str, root: Path = DATA_ROOT / "processed") -> dict:
     descriptor = root / name / "config.yaml"
     assert (
         descriptor.exists()

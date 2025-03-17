@@ -1,7 +1,11 @@
 from pathlib import Path
-import yaml
 import re
 from typing import Optional
+
+import yaml
+
+ROOT = Path(__file__).parent
+DATA_ROOT = ROOT.parent / "data"
 
 
 def yaml_save(file: str = "data.yaml", data: Optional[dict] = None, header: str = ""):

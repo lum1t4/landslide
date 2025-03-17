@@ -1,5 +1,4 @@
 from datetime import datetime
-from functools import partial
 import gc
 import io
 import logging
@@ -16,7 +15,7 @@ from landslide.losses import AutoCriterion
 from landslide.metrics import BinaryConfusionMatrix
 from landslide.model import load_model
 from landslide.torch import device_memory_clear, device_memory_used, init_seeds
-from landslide.trackers import Tracker
+from landslide.trackers import Tracker, WandbTracker
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -24,15 +23,20 @@ logger = logging.getLogger(__name__)
 
 
 def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, optimizer):
+    
     running_loss = 0.0
     n_objectives = len(criterion)
+
+    # DIRTY HACK: shorten the name of the criterion
     # trunacate the names longer than 11 characters to 8 + "..."
     names = [name[:5] + "..." if len(name) > 11 else name for name in criterion.names]
-    print(
-        ("\n" + "%11s" * (5 + n_objectives))
-        % ("Epoch", "GPU_mem", "Loss", *names, "Instances", "Size")
-    )
+    key = "weighted_binary_cross_entropy"
+    if key in criterion.names:
+        names[criterion.names.index(key)] = "wbce"
+        
+    print(("\n" + "%11s" * (5 + n_objectives)) % ("Epoch", "GPU_mem", "Loss", *names, "Instances", "Size"))
     mean_losses = torch.zeros(n_objectives, device=device)
+
 
     progress = tqdm.tqdm(enumerate(loader), total=len(loader))
     for i, (imgs, targets) in progress:
@@ -64,10 +68,7 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
             )
         )
 
-    return {
-        f"train/loss_{name}": loss.item()
-        for name, loss in zip(criterion.names, mean_losses)
-    }
+    return {f"train/loss_{name}": loss.item() for name, loss in zip(criterion.names, mean_losses)}
 
 
 def postprocess(preds: torch.Tensor, hyp: IterableSimpleNamespace):
@@ -81,6 +82,7 @@ def postprocess(preds: torch.Tensor, hyp: IterableSimpleNamespace):
             align_corners=False,
         )
     return preds.to(torch.uint8)
+
 
 
 @torch.inference_mode()
@@ -124,41 +126,15 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
     return metrics
 
 
-def load_dataset(data: dict, hyp: dict):
-    key = "image_sz"
-    image_sz = hyp.get(key, 128)
-    key = "mask_sz"
-    mask_sz = hyp.get(key, 128)
-    key = "normalize"
-    if key in hyp:
-        normalize = hyp.get(key, False)
-        mean = data.get("mean", [0.485, 0.456, 0.406])
-        std = data.get("std", [0.229, 0.224, 0.225])
 
-        dataset = partial(
-            LandslideDataset,
-            mean=mean,
-            std=std,
-            image_sz=image_sz,
-            mask_sz=mask_sz,
-            do_normalize=normalize,
-        )
-        train_set = dataset(data["train"])
-        valid_set = dataset(data[hyp.val], do_rescale=True)
-
-        return train_set, valid_set
-    else:
-        raise ValueError(f"Missing {key} in hyperparameters")
-
-
-def train(hyp, train_data, valid_data, tracker: Tracker = Tracker):
+def train(hyp, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     pretrained = False
-
+    
     data = parse_dataset(hyp.dataset)  # dataset description
     model = load_model(hyp.model, data, hyp)
     save_dir = Path(hyp.save_dir)
-
+    
     device = torch.device(hyp.device)
 
     # Check pretrained and resume
@@ -185,12 +161,30 @@ def train(hyp, train_data, valid_data, tracker: Tracker = Tracker):
         model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay
     )
 
-    logger.info(
-        f"Training on {len(train_data)} samples with imgsz {hyp.image_sz} "
-        f"and validating on {len(valid_data)} samples."
+    train_set = LandslideDataset(
+        data["train"],
+        mean=data["mean"],
+        std=data["std"],
+        image_sz=hyp.image_sz,
+        mask_sz=hyp.mask_sz,
+        do_normalize=True,
     )
-    train_loader = dataloader(train_data, hyp.batch, workers, mode="train")
-    valid_loader = dataloader(valid_data, hyp.batch, workers, mode="valid")
+    valid_set = LandslideDataset(
+        data[hyp.val],
+        mean=data["mean"],
+        std=data["std"],
+        image_sz=hyp.image_sz,
+        mask_sz=hyp.mask_sz,
+        do_normalize=True,
+        do_rescale=True,
+    )
+
+    logger.info(
+        f"Training on {len(train_set)} samples with imgsz {hyp.image_sz} "
+        f"and validating on {len(valid_set)} samples."
+    )
+    train_loader = dataloader(train_set, hyp.batch, workers, hyp.image_sz, mode="train")
+    valid_loader = dataloader(valid_set, hyp.batch, workers, hyp.image_sz, mode="valid")
 
     start_epoch = 0
 
@@ -289,6 +283,7 @@ def model_checkpointing(
         if epoch == best_epoch:
             aliases.append("best")
         tracker.log_model(last, aliases=aliases)
+
 
 
 if __name__ == "__main__":
