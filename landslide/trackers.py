@@ -1,44 +1,57 @@
+from copy import deepcopy
 from pathlib import Path
 from typing import List
-from copy import deepcopy
+
 from landslide.dtypes import IterableSimpleNamespace
+from landslide.torch import rank_zero_only
+
+_WANDB_AVAILABLE = False
 
 try:
     import wandb
+    from wandb import Artifact
+    from wandb.sdk.lib import RunDisabled
+    from wandb.wandb_run import Run
+
+    _WANDB_AVAILABLE = True
 except ImportError:
     wandb = None
 
 
 class Tracker:
-    def __init__(self, hyp: IterableSimpleNamespace):
+    
+    def __init__(self, config: dict | IterableSimpleNamespace):
         pass
 
+    @rank_zero_only
     def log(self, x, y = None, step: int = None):
         pass
 
+    @rank_zero_only
     def log_model(self, checkpoint: Path, aliases: List[str] = ["last"]):
         pass
 
 
 class WandbTracker(Tracker):
-    def __init__(self, hyp: IterableSimpleNamespace):
-        super().__init__()
-        if wandb:
-            wandb.init(
-                project=hyp.project,
-                name=hyp.name,
-                config=vars(hyp),
-                allow_val_change=True
-            )
+    def __init__(self, project: str, name: str, config: dict):
+        super().__init__(config)
+        self.run = None
+        if _WANDB_AVAILABLE:
+            self.run = wandb.init(project=project, name=name, config=config, allow_val_change=True)
     
+    @rank_zero_only
     def log(self, x, y = None, step: int = None):
-        if wandb:
+        if _WANDB_AVAILABLE:
             if isinstance(x, dict):
-                wandb.log(x, step=step)
-            wandb.log({x: y}, step=step)
+                self.run.log(x, step=step)
+            else:
+                self.run.log({x: y}, step=step)
+        else:
+            raise ImportError("wandb is not available. Please install it to use WandbTracker.")
     
-    def log_model(checkpoint, aliases = ["last"]):
-        if wandb:
+    @rank_zero_only
+    def log_model(self, checkpoint, aliases = ["last"]):
+        if _WANDB_AVAILABLE:
             artifact = wandb.Artifact(f"run_{wandb.run.id}_model", type="model")
             artifact.add_file(checkpoint, name=checkpoint.name)
             wandb.run.log_artifact(artifact, aliases=aliases)

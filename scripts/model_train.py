@@ -143,12 +143,16 @@ def train(hyp, tracker: Tracker = Tracker):
     hyp.resume = hyp.resume and pretrained
 
     # Rename run based on hyperparameters
-    hyp.name = f"{hyp.model}_{hyp.dataset}_{hyp.image_sz}_{hyp.batch}_{hyp.lr}"
+    hyp.name = f"model_{hyp.model}_dataset_{hyp.dataset}_imagesz_{hyp.image_sz}_batch_{hyp.batch}_lr_{hyp.lr}"
     if pretrained:
         hyp.name += "_pretrained" if not hyp.resume else "_resumed"
 
     logger.info(f"Run: f{hyp.name}")
-    tracker = Tracker(hyp)
+
+    if hyp.tracker == "wandb":
+        tracker = WandbTracker(project=hyp.project, name=hyp.name, config=vars(hyp))
+    else:
+        tracker = Tracker(hyp)
     nc = data.get("nc", 1)
     model.nc = nc
 
@@ -303,13 +307,13 @@ if __name__ == "__main__":
         batch=32,
         workers=8,
         monitor="valid/F1-Score",
-        patience=10,
+        patience=5,
         mode="max",
         val="valid",
         weight_decay=5e-4,
         ignore_index=None,  # or 255
         criterion="weighted_binary_cross_entropy",
-        epochs=100,
+        epochs=30,
         normalize=True,  # not yet used
         lr=1e-3,
         device="mps:0",
@@ -317,5 +321,10 @@ if __name__ == "__main__":
         save_dir="./runs",
     )
 
+    import argparse
+    parser = argparse.ArgumentParser()
+    for k, v in hyp.items():
+        parser.add_argument(f"--{k}", default=v, type=type(v))
+    hyp = vars(parser.parse_args())
     hyp = IterableSimpleNamespace(**hyp)
     train(hyp)

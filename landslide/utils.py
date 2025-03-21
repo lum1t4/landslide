@@ -1,3 +1,6 @@
+import logging
+import logging.config
+import os
 from pathlib import Path
 import re
 from typing import Optional
@@ -64,3 +67,36 @@ def yaml_load(file: str = "data.yaml", append_filename: bool = False):
         if append_filename:
             data["__path__"] = str(file.absolute())
         return data
+
+
+def set_logging(name="LOGGING_NAME", verbose=True):
+    """Sets up logging for the given name with UTF-8 encoding support, ensuring compatibility across different
+    environments.
+    """
+    # sets up logging for the given name
+    rank = int(os.getenv('RANK', -1))  # rank in world for Multi-GPU trainings
+    level = logging.INFO if verbose and rank in {-1, 0} else logging.ERROR
+    logging.config.dictConfig({
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            name: {
+                "format": "%(message)s"}},
+        "handlers": {
+            name: {
+                "class": "logging.StreamHandler",
+                "formatter": name,
+                "level": level,}},
+        "loggers": {
+            name: {
+                "level": level,
+                "handlers": [name],
+                "propagate": False,}}})
+
+    # Set up the logger
+    logger = logging.getLogger(name)
+    logger.propagate = False
+    return logger
+
+
+logger = set_logging(__name__)
