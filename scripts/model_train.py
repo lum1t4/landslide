@@ -114,11 +114,9 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
                 preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
             )
         aggr_loss, losses = criterion(preds, targets)
-        running_loss += aggr_loss.item()
         mask = postprocess(preds, hyp)
         targets = targets.long()
         confmat(mask, targets)
-        
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
         mean_losses = (mean_losses * i + losses) / (i + 1)
 
@@ -358,7 +356,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     for k, v in hyp.items():
-        parser.add_argument(f"--{k}", default=v, type=type(v))
+        if v is None:
+            parser.add_argument(f"--{k}", default=v)
+        else:
+            parser.add_argument(f"--{k}", default=v, type=type(v))
     hyp = vars(parser.parse_args())
     hyp = IterableSimpleNamespace(**hyp)
     train(hyp)
