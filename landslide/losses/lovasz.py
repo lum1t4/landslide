@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 
-from landslide.torch import check_shape
+from landslide.torch_utils import check_shape
 
 # based on:
 # https://github.com/bermanmaxim/LovaszSoftmax

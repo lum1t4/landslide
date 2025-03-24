@@ -4,6 +4,7 @@ import io
 import logging
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,8 +15,8 @@ from landslide.dtypes import IterableSimpleNamespace
 from landslide.losses import AutoCriterion
 from landslide.metrics import BinaryConfusionMatrix
 from landslide.model import load_model
-from landslide.torch import device_memory_clear, device_memory_used, init_seeds
-from landslide.trackers import Tracker, WandbTracker
+from landslide.torch_utils import device_memory_clear, device_memory_used, init_seeds
+from landslide.trackers import _WANDB_AVAILABLE, Tracker, WandbTracker
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -33,7 +34,10 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
     key = "weighted_binary_cross_entropy"
     if key in criterion.names:
         names[criterion.names.index(key)] = "wbce"
-        
+    key = "binary_cross_entropy"
+    if key in criterion.names:
+        names[criterion.names.index(key)] = "bce"
+
     print(("\n" + "%11s" * (5 + n_objectives)) % ("Epoch", "GPU_mem", "Loss", *names, "Instances", "Size"))
     mean_losses = torch.zeros(n_objectives, device=device)
 
@@ -68,7 +72,9 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
             )
         )
 
-    return {f"train/loss_{name}": loss.item() for name, loss in zip(criterion.names, mean_losses)}
+    metrics = {f"train/{name}": cl.item() for name, cl in zip(criterion.names, mean_losses)}
+    metrics["train/loss"] = running_loss
+    return metrics
 
 
 def postprocess(preds: torch.Tensor, hyp: IterableSimpleNamespace):
@@ -111,14 +117,15 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
         running_loss += aggr_loss.item()
         mask = postprocess(preds, hyp)
         targets = targets.long()
-        confmat.update(mask, targets)
+        confmat(mask, targets)
+        
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
         mean_losses = (mean_losses * i + losses) / (i + 1)
 
         # update description with conf matrix
         progress.set_description(("%11.4g" * 4) % tuple(confmat.metrics().values()))
 
-    metrics = {"valid/loss": running_loss / len(loader)}
+    metrics = {"valid/loss": running_loss }
     metrics = {**metrics, **confmat.metrics(prefix="valid/")}
     for name, loss in zip(criterion.names, mean_losses):
         metrics[f"valid/{name}"] = loss.item()
@@ -143,11 +150,11 @@ def train(hyp, tracker: Tracker = Tracker):
     hyp.resume = hyp.resume and pretrained
 
     # Rename run based on hyperparameters
-    hyp.name = f"model_{hyp.model}_dataset_{hyp.dataset}_imagesz_{hyp.image_sz}_batch_{hyp.batch}_lr_{hyp.lr}"
+    hyp.name = f"model_{hyp.model}_dataset_{hyp.dataset}_imgsz_{hyp.image_sz}_criterion_{hyp.criterion}"
     if pretrained:
         hyp.name += "_pretrained" if not hyp.resume else "_resumed"
 
-    logger.info(f"Run: f{hyp.name}")
+    print(f"Run: f{hyp.name}")
 
     if hyp.tracker == "wandb":
         tracker = WandbTracker(project=hyp.project, name=hyp.name, config=vars(hyp))
@@ -183,7 +190,7 @@ def train(hyp, tracker: Tracker = Tracker):
         do_rescale=True,
     )
 
-    logger.info(
+    print(
         f"Training on {len(train_set)} samples with imgsz {hyp.image_sz} "
         f"and validating on {len(valid_set)} samples."
     )
@@ -206,41 +213,68 @@ def train(hyp, tracker: Tracker = Tracker):
         if "metrics" in checkpoint and hyp.monitor in checkpoint["metrics"]:
             fitness = checkpoint["metrics"][hyp.monitor]
         best_epoch = start_epoch
-        logger.info(f"Resuming training from epoch {start_epoch}")
+        print(f"Resuming training from epoch {start_epoch}")
 
     model = model.to(device)
     for epoch in range(start_epoch, hyp.epochs):
-        logger.info(f"Epoch {epoch+1}/{hyp.epochs}")
+        print(f"Epoch {epoch+1}/{hyp.epochs}")
         # If you want training metrics (in addition to loss) pass compute_metrics=True.
         model.train()
         train_metrics = train_epoch(
             model, hyp, train_loader, epoch, criterion, device, optimizer
         )
-
         model.eval()
         valid_metrics = valid_epoch(model, hyp, valid_loader, epoch, criterion, device)
         device_memory_clear(device)
         gc.collect()
-
         metrics = {**train_metrics, **valid_metrics}
         tracker.log(metrics, step=epoch)
-
         def cmp(x, y):
             return x >= y if hyp.mode == "max" else x <= y
-
         if cmp(metrics[hyp.monitor], fitness):
             fitness = metrics[hyp.monitor]
             best_epoch = epoch
-
         model_checkpointing(
             model, optimizer, epoch, metrics, hyp, weights_dir, best_epoch, tracker
         )
-
         if (epoch - best_epoch) == hyp.patience:
-            logger.info(f"Early stopping at epoch {epoch+1}")
+            print(f"Early stopping at epoch {epoch+1}")
             break
 
-        logger.info(f"Epoch {epoch+1} metrics: {metrics}")
+    # Visualize validation predictions at the end of training
+    if hyp.tracker == "wandb" and _WANDB_AVAILABLE:
+        import wandb
+        print("Generating validation visualizations for Wandb...")
+        model.eval()
+        table = wandb.Table(columns=["Image", "Ground Truth", "Prediction"])
+        mean = torch.tensor(data["mean"]).view(3, 1, 1).to(device)
+        std = torch.tensor(data["std"]).view(3, 1, 1).to(device)
+
+        for imgs, targets in valid_loader:
+            imgs = imgs.to(device)
+            targets = targets.to(device)
+            with torch.inference_mode():
+                preds = model(imgs)
+                preds = postprocess(preds, hyp)
+
+            imgs = imgs * std + mean
+            imgs = imgs * 255
+            imgs = imgs.to(torch.uint8)
+            
+            for img, target, pred in zip(imgs, targets, preds):
+                gt_mask = target.squeeze().cpu().numpy().astype(np.uint8) * 255
+                gt_image = img.cpu().numpy().transpose(1, 2, 0).astype(np.uint8)
+                pred_mask = pred.squeeze().cpu().numpy().astype(np.uint8) * 255
+                
+                table.add_data(
+                    wandb.Image(gt_image, caption="Input Image"),
+                    wandb.Image(gt_mask, caption="Ground Truth"),
+                    wandb.Image(pred_mask, caption="Prediction"),
+                )
+
+        # Log to wandb
+        tracker.log({"validation_samples": table})
+        print("Validation visualizations complete")
 
     return model
 
@@ -294,7 +328,7 @@ if __name__ == "__main__":
     hyp = dict(
         model="unet",
         project="landslide",
-        dataset="A19",
+        dataset="L4S",
         name=None,
         weights=None,  # model weights if using a pretrained model
         resume=False,
@@ -317,7 +351,7 @@ if __name__ == "__main__":
         normalize=True,  # not yet used
         lr=1e-3,
         device="mps:0",
-        tracker="wandb",
+        tracker=None,
         save_dir="./runs",
     )
 

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List
 
 from landslide.dtypes import IterableSimpleNamespace
-from landslide.torch import rank_zero_only
+from landslide.torch_utils import rank_zero_only
 
 _WANDB_AVAILABLE = False
 

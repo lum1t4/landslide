@@ -148,6 +148,11 @@ class BinaryConfusionMatrix:
         )
         confmat = _binary_confusion_matrix_update(preds, target)
         self.confmat += confmat
+        return confmat
+    
+    def __call__(self, preds: Tensor, target: Tensor):
+        self.update(preds, target)
+        return self.confmat
 
     def compute(self, normalize: bool = False, flatten: bool = False) -> Tensor:
         """Compute confusion matrix."""
@@ -160,7 +165,7 @@ class BinaryConfusionMatrix:
 
     @property
     def tp(self):
-        return self.confmat[0, 0].item()
+        return self.confmat[1, 1].item()
 
     @property
     def fp(self):
@@ -172,28 +177,33 @@ class BinaryConfusionMatrix:
 
     @property
     def tn(self):
-        return self.confmat[1, 1].item()
+        return self.confmat[0, 0].item()
 
     @property
     def precision(self):
-        tp, fp, _, _ = self.confmat.flatten()
-        return tp / (tp + fp + 1e-7)
+        tp = self.tp
+        fp = self.fp
+        zero_div = tp + fp == 0
+        return tp / (tp + fp) if not zero_div else 0.0
 
     @property
     def recall(self):
-        tp, _, fn, _ = self.confmat.flatten()
-        return tp / (tp + fn + 1e-7)
+        tp = self.tp
+        fn = self.fn
+        zero_div = tp + fn == 0
+        return tp / (tp + fn) if not zero_div else 0.0
 
     @property
     def accuracy(self):
-        tp, fp, fn, tn = self.confmat.flatten()
-        return (tp + tn) / (tp + tn + fp + fn + 1e-7)
-
+        return (self.tp + self.tn) / (self.tp + self.tn + self.fp + self.fn + 1e-7)
     @property
     def f1(self):
         precision = self.precision
         recall = self.recall
-        return 2 * precision * recall / (precision + recall + 1e-7)
+        zero_div = precision + recall == 0
+        if zero_div:
+            return 0.0
+        return 2 * precision * recall / (precision + recall)
 
     def metrics(self, prefix: Optional[str] = ""):
         return {

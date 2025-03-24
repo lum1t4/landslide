@@ -13,7 +13,7 @@ import torch
 from torch import Tensor, nn, tensor
 
 from landslide.losses.common import mask_ignore_pixels
-from landslide.torch import check_shape, is_tensor, one_hot
+from landslide.torch_utils import check_shape, is_tensor, one_hot
 
 
 def focal_loss(

@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision.transforms.v2 import functional as F
 
-from landslide.torch import RANK, DistributedEvalSampler, seed_worker
+from landslide.torch_utils import RANK, DistributedEvalSampler, seed_worker
 from landslide.utils import DATA_ROOT, yaml_load
 
 IMG_FORMATS = ["bmp", "jpg", "jpeg", "png", "tif", "tiff", "dng", "webp", "mpo"]
@@ -145,6 +145,8 @@ class LandslideDataset(Dataset):
             do_resize=self.resize,
             size=self.image_sz,
             do_reduce=False,
+            image_mean=self.mean,
+            image_std=self.std,
             do_rescale=self.rescale,
             do_normalize=self.normalize,
         )

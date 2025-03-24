@@ -6,7 +6,7 @@ import torch
 from torch import Tensor, nn
 
 from landslide.losses.common import mask_ignore_pixels
-from landslide.torch import is_tensor, one_hot
+from landslide.torch_utils import is_tensor, one_hot
 
 # based on:
 # https://github.com/kevinzakka/pytorch-goodies/blob/master/losses.py
