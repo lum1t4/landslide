@@ -16,6 +16,13 @@ classifiers = [
     
 ]
 requires-python = "~=3.10"
+dependencies = [
+    "numpy>=2.2.4",
+    "pyyaml>=6.0.2",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
+    "tqdm>=4.67.1",
+]
 
 [tool.black]
 line-length = 99
@@ -30,4 +37,10 @@ exclude = '''
 [tool.ruff.lint.isort]
 known-first-party = ["landslide"]
 force-sort-within-sections = true
+
+[dependency-groups]
+dev = [
+    "dvc>=3.59.1",
+    "dvc-s3>=3.2.0",
+]
 
