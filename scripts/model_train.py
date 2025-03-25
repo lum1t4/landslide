@@ -77,18 +77,17 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
     return metrics
 
 
-def postprocess(preds: torch.Tensor, hyp: IterableSimpleNamespace):
-    _, ch, h, w = preds.shape
-    preds = (F.sigmoid(preds) > hyp.conf) if ch == 1 else torch.argmax(preds, dim=1)
-    if h != hyp.image_sz or w != hyp.image_sz:
-        preds = F.interpolate(
-            preds,
-            size=(hyp.image_sz, hyp.image_sz),
-            mode="bilinear",
-            align_corners=False,
-        )
+def postprocess_predictions(preds: torch.Tensor, conf: float = 0.5):
+    B, C, H, W = preds.shape
+    preds = torch.argmax(preds, dim=1) if C != 1 else F.sigmoid(preds) > conf
     return preds.to(torch.uint8)
 
+def preprocess_predictions(preds: torch.Tensor, targets: torch.Tensor):
+    if preds.shape[-2:] != targets.shape[-2:]:
+        preds = F.interpolate(
+            preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
+        )
+    return preds
 
 
 @torch.inference_mode()
@@ -109,12 +108,9 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
             device, non_blocking=True, dtype=torch.float32
         )  # TODO: remove dtype
         preds = model(imgs)  # (B, C, H, W) where C = number of classes
-        if preds.shape[-2:] != targets.shape[-2:]:
-            preds = F.interpolate(
-                preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
-            )
+        preds = preprocess_predictions(preds, targets)
         aggr_loss, losses = criterion(preds, targets)
-        mask = postprocess(preds, hyp)
+        mask = postprocess_predictions(preds, conf=hyp.conf)
         targets = targets.long()
         confmat(mask, targets)
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
@@ -253,7 +249,7 @@ def train(hyp, tracker: Tracker = Tracker):
             targets = targets.to(device)
             with torch.inference_mode():
                 preds = model(imgs)
-                preds = postprocess(preds, hyp)
+                preds = postprocess_predictions(preds, conf=hyp.conf)
 
             imgs = imgs * std + mean
             imgs = imgs * 255
@@ -339,13 +335,13 @@ if __name__ == "__main__":
         batch=32,
         workers=8,
         monitor="valid/F1-Score",
-        patience=5,
+        patience=10,
         mode="max",
         val="valid",
         weight_decay=5e-4,
         ignore_index=None,  # or 255
         criterion="weighted_binary_cross_entropy",
-        epochs=30,
+        epochs=50,
         normalize=True,  # not yet used
         lr=1e-3,
         device="mps:0",
