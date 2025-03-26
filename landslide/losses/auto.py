@@ -62,7 +62,7 @@ class AutoCriterion(nn.Module):
         if name == "binary_cross_entropy":
             return nn.BCEWithLogitsLoss()
         elif name == "focal_loss":
-            return BinaryFocalLossWithLogits(alpha=0.25, gamma=2.0)
+            return BinaryFocalLossWithLogits(alpha=0.75, gamma=2.0)
         elif name == "lovasz_hinge_loss" or name == "lovasz_loss":
             return LovaszHingeLoss()
         elif name == "weighted_binary_cross_entropy":

@@ -48,11 +48,7 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
         optimizer.zero_grad()
         # Forward
         preds = model(imgs)  # (B, C, H, W) where C = number of classes
-        if preds.shape[-2:] != targets.shape[-2:]:
-            preds = nn.functional.interpolate(
-                preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
-            )
-
+        preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
         aggr_loss, losses = criterion(preds, targets.to(device, dtype=torch.float32))
         aggr_loss.backward()
         optimizer.step()
@@ -82,13 +78,6 @@ def postprocess_predictions(preds: torch.Tensor, conf: float = 0.5):
     preds = torch.argmax(preds, dim=1) if C != 1 else F.sigmoid(preds) > conf
     return preds.to(torch.uint8)
 
-def preprocess_predictions(preds: torch.Tensor, targets: torch.Tensor):
-    if preds.shape[-2:] != targets.shape[-2:]:
-        preds = F.interpolate(
-            preds, size=targets.shape[-2:], mode="bilinear", align_corners=False
-        )
-    return preds
-
 
 @torch.inference_mode()
 def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
@@ -108,13 +97,13 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
             device, non_blocking=True, dtype=torch.float32
         )  # TODO: remove dtype
         preds = model(imgs)  # (B, C, H, W) where C = number of classes
-        preds = preprocess_predictions(preds, targets)
+        preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
         aggr_loss, losses = criterion(preds, targets)
         mask = postprocess_predictions(preds, conf=hyp.conf)
         targets = targets.long()
         confmat(mask, targets)
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
-        mean_losses = (mean_losses * i + losses) / (i + 1)
+        mean_losses = (mean_losses * i + losses.detach()) / (i + 1)
 
         # update description with conf matrix
         progress.set_description(("%11.4g" * 4) % tuple(confmat.metrics().values()))
@@ -166,22 +155,25 @@ def train(hyp, tracker: Tracker = Tracker):
         model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay
     )
 
+
+    mean = data["mean"]
+    std = data["std"]
+    
     train_set = LandslideDataset(
         data["train"],
-        mean=data["mean"],
-        std=data["std"],
         image_sz=hyp.image_sz,
         mask_sz=hyp.mask_sz,
-        do_normalize=True,
+        mean=mean,
+        std=std,
+        do_normalize=hyp.normalize,
     )
     valid_set = LandslideDataset(
         data[hyp.val],
-        mean=data["mean"],
-        std=data["std"],
         image_sz=hyp.image_sz,
         mask_sz=hyp.mask_sz,
-        do_normalize=True,
-        do_rescale=True,
+        mean=mean,
+        std=std,
+        do_normalize=hyp.normalize,
     )
 
     print(
