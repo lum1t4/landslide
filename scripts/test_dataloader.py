@@ -1,11 +1,11 @@
 from matplotlib import pyplot as plt
 
-from landslide.data import LandslideDataset, dataloader, parse_dataset
+from landslide.data import LandslideDataset, dataloader, dataset_read_config
 
 if __name__ == "__main__":
     # Read a batch
 
-    data = parse_dataset("L4S")
+    data = dataset_read_config("L4S")
     dataset = LandslideDataset(data["valid"], do_normalize=False)
     print(f"Dataset length: {len(dataset)}")
     loader = dataloader(dataset, batch_size=3, shuffle=False)

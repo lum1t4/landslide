@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import tqdm
 
-from landslide.data import LandslideDataset, dataloader, parse_dataset
+from landslide.data import LandslideDataset, dataloader, dataset_read_config
 from landslide.dtypes import IterableSimpleNamespace
 from landslide.losses import AutoCriterion
 from landslide.metrics import BinaryConfusionMatrix
@@ -121,7 +121,7 @@ def train(hyp, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     pretrained = False
     
-    data = parse_dataset(hyp.dataset)  # dataset description
+    data = dataset_read_config(hyp.dataset)  # dataset description
     model = load_model(hyp.model, data, hyp)
     save_dir = Path(hyp.save_dir)
     
@@ -151,13 +151,8 @@ def train(hyp, tracker: Tracker = Tracker):
     criterion = AutoCriterion(hyp.criterion, model, hyp, data, device)
 
     # Define optimization components
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay
-    )
-
-
-    mean = data["mean"]
-    std = data["std"]
+    optimizer = torch.optim.Adam(model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay)
+    mean, std = data["mean"], data["std"]
     
     train_set = LandslideDataset(
         data["train"],

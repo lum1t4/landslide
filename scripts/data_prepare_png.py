@@ -1,7 +1,6 @@
 import argparse
 import concurrent.futures
 from functools import partial
-import os
 from pathlib import Path
 
 import cv2
@@ -55,17 +54,11 @@ def main(src: Path, dst: Path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--src",
-        type=str,
-        default=f"./dataset{os.sep}raw{os.sep}Ischia",
-        help="Source directory",
-    )
-    parser.add_argument(
-        "--dst",
-        type=str,
-        default=f"./dataset{os.sep}processed{os.sep}Ischia",
-        help="Destination directory",
-    )
+    parser.add_argument("--src", type=str, required=True, help="Source directory")
+    parser.add_argument("--dst", type=str, required=True, help="Destination directory")
     args = parser.parse_args()
-    main(Path(args.src), Path(args.dst))
+
+    src = Path(args.src)
+    dst = Path(args.dst)
+    assert src.exists(), f"Source directory {src} does not exist."
+    main(src, dst)

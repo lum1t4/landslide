@@ -8,9 +8,11 @@ _WANDB_AVAILABLE = False
 
 try:
     import wandb
-    from wandb import Artifact
-    from wandb.sdk.lib import RunDisabled
-    from wandb.wandb_run import Run
+
+    # TODO: Leverage wandb typing and uncomment the following lines
+    # from wandb import Artifact
+    # from wandb.sdk.lib import RunDisabled
+    # from wandb.wandb_run import Run
 
     _WANDB_AVAILABLE = True
 except ImportError:

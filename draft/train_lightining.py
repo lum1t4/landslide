@@ -7,7 +7,7 @@ from lightning.pytorch.loggers import WandbLogger
 import torch
 import torch.nn.functional as F
 
-from landslide.data import LandslideDataset, dataloader, parse_dataset
+from landslide.data import LandslideDataset, dataloader, dataset_read_config
 from landslide.dtypes import IterableSimpleNamespace
 from landslide.losses import AutoCriterion
 from landslide.metrics import BinaryConfusionMatrix
@@ -92,7 +92,7 @@ def train(hyp, tracker=None):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     
     # Load data
-    data = parse_dataset(hyp.dataset)
+    data = dataset_read_config(hyp.dataset)
     
     # Load model
     model = load_model(hyp.model, data, hyp)

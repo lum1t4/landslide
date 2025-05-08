@@ -12,7 +12,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision.transforms.v2 import functional as F
 
 from landslide.torch_utils import RANK, DistributedEvalSampler, seed_worker
-from landslide.utils import DATA_ROOT, yaml_load
+from landslide.utils import DATA_ROOT, yaml_load, yaml_save
 
 IMG_FORMATS = ["bmp", "jpg", "jpeg", "png", "tif", "tiff", "dng", "webp", "mpo"]
 
@@ -46,7 +46,8 @@ def get_images(path: str | Path, prefix="⚠️"):
     return im_files
 
 
-def im2mask(im: Path) -> Path:
+def img_to_mask(im: Path) -> Path:
+    """by default suppose img is under image folder which as sibling mask folder where mask is located"""
     return im.parent.parent.joinpath("mask", im.name.replace("image", "mask"))
 
 
@@ -106,10 +107,11 @@ def postprocess(masks, targets, conf: float = 0.5):
     return masks.to(torch.uint8)
 
 
-class LandslideDataset(Dataset):
-    def __init__(
-        self,
-        path: str | Path,
+class SegmentationDataset(Dataset):
+    def __init__(self,
+        images: List[Path],
+        masks: List[Path] = None,
+        img_to_mask_fn: Callable = img_to_mask,
         image_sz: int = 128,
         mask_sz: int = 128,
         do_resize: bool = True,
@@ -119,7 +121,10 @@ class LandslideDataset(Dataset):
         mean: list[float] = [0.485, 0.456, 0.406],
         std: list[float] = [0.229, 0.224, 0.225],
     ):
-        self.files = [Path(f) for f in get_images(path)]
+        super().__init__()
+        self.images = images
+        self.masks = masks
+        self.img_to_mask_fn = img_to_mask_fn
         self.image_sz = image_sz
         self.mask_sz = mask_sz
         self.normalize = do_normalize
@@ -128,7 +133,7 @@ class LandslideDataset(Dataset):
         self.mean = mean
         self.std = std
         self.rescale = do_rescale
-
+    
     def preprocess_mask(self, mask: Image.Image):
         return preprocess(
             mask,
@@ -152,19 +157,49 @@ class LandslideDataset(Dataset):
         )
 
     def __len__(self):
-        return len(self.files)
+        return len(self.images)
 
-    def __getitem__(self, idx):
-        img = Image.open(self.files[idx])
-        mask = Image.open(im2mask(self.files[idx]))
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        img = Image.open(self.images[idx])
+        mask_path = self.img_to_mask_fn(self.images[idx])
+        if self.masks is not None:
+            mask_path = self.masks[idx]
+        mask = Image.open(mask_path).convert("L")
+        print(mask_path, mask.mode)
         return self.preprocess_img(img), self.preprocess_mask(mask)
+
+
+class LandslideDataset(SegmentationDataset):
+    def __init__(
+        self,
+        path: str | Path,
+        image_sz: int = 128,
+        mask_sz: int = 128,
+        do_resize: bool = True,
+        do_reduce: bool = False,  # only for labels
+        do_normalize: bool = False,  # only for imgs
+        do_rescale: bool = True,
+        mean: list[float] = [0.485, 0.456, 0.406],
+        std: list[float] = [0.229, 0.224, 0.225],
+    ):
+        super().__init__(
+            [Path(f) for f in get_images(path)], 
+            image_sz=image_sz,
+            mask_sz=mask_sz,
+            do_resize=do_resize,
+            do_reduce=do_reduce,
+            do_normalize=do_normalize,
+            do_rescale=do_rescale,
+            mean=mean,
+            std=std
+        )
 
 
 class H5Dataset(Dataset):
     def __init__(self, path: str | Path):
         path = Path(path) if isinstance(path, str) else path
         self.im_files = sorted(path.glob("**/img/*.h5"), key=lambda x: x.stem)
-        self.mask_files = [im2mask(f) for f in self.im_files]
+        self.mask_files = [img_to_mask(f) for f in self.im_files]
 
     def __len__(self):
         return len(self.im_files)
@@ -177,25 +212,9 @@ class H5Dataset(Dataset):
             img = i["img"][:]
             mask = m["mask"][:]
 
-        img = np.asarray(img, np.float32).transpose(
-            (-1, 0, 1)
-        )  # (H, W, C) -> (C, H, W)
+        img = np.asarray(img, np.float32).transpose((-1, 0, 1))  # (H, W, C) -> (C, H, W)
         mask = np.asarray(mask, np.float32)
         return img, mask
-
-
-# LS3 = partial(LandslideDataset,
-#     num_channels=3,
-#     mean=[-0.3074, -0.1277, -0.0625],
-#     std=[0.8775, 0.8860, 0.8869]
-# )
-#
-# LS14 = partial(
-#     LandslideDataset,
-#     ch=14,
-#     mean=[-0.4914, -0.3074, -0.1277, -0.0625, 0.0439, 0.0803, 0.0644, 0.0802, 0.3000, 0.4082, 0.0823, 0.0516, 0.3338, 0.7819],
-#     std=[0.9325, 0.8775, 0.8860, 0.8869, 0.8857, 0.8418, 0.8354, 0.8491, 0.9061, 1.6072, 0.8848, 0.9232, 0.9018, 1.2913]
-# )
 
 
 def dataloader(
@@ -230,7 +249,7 @@ def dataloader(
     )
 
 
-def parse_dataset(name: str, root: Path = DATA_ROOT / "processed") -> dict:
+def dataset_read_config(name: str, root: Path = DATA_ROOT / "processed") -> dict:
     descriptor = root / name / "config.yaml"
     assert (
         descriptor.exists()
@@ -240,3 +259,125 @@ def parse_dataset(name: str, root: Path = DATA_ROOT / "processed") -> dict:
     for fold in ["train", "valid", "test"]:
         content[fold] = path.absolute().joinpath(content.get(fold, fold))
     return content
+
+
+def dataset_compute_stats(data_root: Path, batch_size: int = 32):
+    """
+    Compute dataset statistics for training:
+      - Number of mask classes
+      - Per-channel mean and standard deviation of images
+      - Class-weight for positive (landslide) pixels
+
+    Args:
+        data_root (Path): Root directory of the dataset (contains train/, valid/, test/).
+        batch_size (int): Batch size for the data loader.
+
+    Returns:
+        num_classes (int): Number of mask channels (1 for binary, >1 for multi-class).
+        mean (Tensor[C]): Mean pixel value per channel.
+        std  (Tensor[C]): Standard deviation per channel.
+        pos_weight (float): Weight to balance positive vs negative pixels in loss.
+    """
+    # Prepare the dataset (no normalization yet)
+    img_dir = data_root / "train" / "img"
+    dataset = LandslideDataset(img_dir, do_normalize=False, image_sz=512)
+
+    # Inspect one sample to get channel & class info
+    sample_img, sample_mask = dataset.__getitem__(0)
+    num_channels = sample_img.shape[0]
+    # If mask is H×W it's binary; else first dimension = number of classes
+    num_classes = 1 if sample_mask.ndim == 2 else sample_mask.shape[0]
+
+    # Accumulators for pixel sums
+    channel_sum = torch.zeros(num_channels)
+    channel_sq_sum = torch.zeros(num_channels)
+
+    # Counters for pixels and patches
+    pixel_count = 0               # total number of pixels across all images
+    patch_count = 0               # total number of mask patches
+    target_count = 0              # total number of pixels across all masks
+    pos_patch_count = 0           # number of patches with at least one positive pixel
+    pos_target_count = 0          # total number of positive (landslide) pixels
+    pos_target_in_pos_patches = 0 # positive pixels only within positive patches
+
+    # Create a loader to iterate over the dataset
+    loader = dataloader(
+        dataset,
+        batch_size=batch_size,
+        workers=0,
+        shuffle=False,
+        mode="valid"
+    )
+
+    # Iterate batches and accumulate statistics
+    for images, masks in loader:
+        # images.shape = [B, C, H, W]
+        B, C, H, W = images.shape
+
+        # Sum of pixels and squared pixels per channel
+        channel_sum += images.sum(dim=[0, 2, 3])
+        channel_sq_sum += (images ** 2).sum(dim=[0, 2, 3])
+
+        # Update total pixel count
+        pixel_count += B * H * W
+        target_count += masks.numel()
+
+        patch_count += B
+
+        # Examine each sample mask in the batch
+        for mask in masks:
+            # Create boolean mask of positive pixels
+            mask = (mask == 1)
+            sample_target_pos = mask.sum().item()
+            if sample_target_pos > 0:
+                pos_patch_count += 1
+                pos_target_in_pos_patches += sample_target_pos
+                pos_target_count += sample_target_pos
+
+    # Compute mean and standard deviation per channel
+    mean = channel_sum / pixel_count
+    var = (channel_sq_sum / pixel_count) - mean ** 2
+    std = torch.sqrt(var)
+
+    target_weight = (target_count - pos_target_count) / pos_target_count
+    # target_inv_freq = target_count / pos_target_count
+
+    return num_classes, mean, std, target_weight
+
+
+
+def dataset_write_config(path: str, batch_size: int = 32):
+    """
+    Compute stats and write a config.yaml in the dataset root.
+
+    Args:
+        path (str): Path to dataset root containing train/, valid/, test/.
+        batch_size (int): Batch size to use when computing statistics.
+        verbose (bool): Whether to log progress and results.
+    """
+    path = Path(path)
+    config = path / "config.yaml"
+    data = yaml_load(config) if config.exists() else {}
+    nc, mean, std, pos_weights = dataset_compute_stats(path)
+    data["nc"] = nc
+
+    data["train"] = "train/img"
+
+    train = path / "train" / "img"
+    valid = path / "valid" / "img"
+    test = path / "test" / "img"
+
+    data["train"] = train.relative_to(path).as_posix()
+    
+    if valid.exists():
+        data["valid"] = valid.relative_to(path).as_posix()
+        if test.exists():
+            data["test"] = test.relative_to(path).as_posix()
+    elif test.exists():
+        data["valid"] = test.relative_to(path).as_posix()
+
+    data["mean"] = mean.tolist()
+    data["std"] = std.tolist()
+    data["pos_weights"] = pos_weights
+    yaml_save(config, data)
+    print(data)

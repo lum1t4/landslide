@@ -13,7 +13,7 @@ import torch.utils.data
 from torch.utils.data import DataLoader, Dataset
 import tqdm
 
-from landslide.data import LandslideDataset, dataloader, parse_dataset
+from landslide.data import LandslideDataset, dataloader, dataset_read_config
 from landslide.dtypes import IterableSimpleNamespace
 from landslide.model import UNet
 from landslide.torch_utils import (
