@@ -12,7 +12,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision.transforms.v2 import functional as F
 
 from landslide.torch_utils import RANK, DistributedEvalSampler, seed_worker
-from landslide.utils import DATA_ROOT, yaml_load, yaml_save
+from landslide.utils import yaml_load, yaml_save
 
 IMG_FORMATS = ["bmp", "jpg", "jpeg", "png", "tif", "tiff", "dng", "webp", "mpo"]
 
@@ -165,7 +165,6 @@ class SegmentationDataset(Dataset):
         if self.masks is not None:
             mask_path = self.masks[idx]
         mask = Image.open(mask_path).convert("L")
-        print(mask_path, mask.mode)
         return self.preprocess_img(img), self.preprocess_mask(mask)
 
 
@@ -249,11 +248,8 @@ def dataloader(
     )
 
 
-def dataset_read_config(name: str, root: Path = DATA_ROOT / "processed") -> dict:
-    descriptor = root / name / "config.yaml"
-    assert (
-        descriptor.exists()
-    ), f"Dataset descriptor not found in {descriptor.parent.as_posix()}"
+def dataset_read_config(descriptor) -> dict:
+    assert descriptor.exists(), f"Dataset descriptor not found in {descriptor.parent.as_posix()}"
     content = yaml_load(descriptor)
     path: Path = content.get("dataset", descriptor.parent)
     for fold in ["train", "valid", "test"]:
@@ -358,9 +354,9 @@ def dataset_write_config(path: str, batch_size: int = 32):
     path = Path(path)
     config = path / "config.yaml"
     data = yaml_load(config) if config.exists() else {}
-    nc, mean, std, pos_weights = dataset_compute_stats(path)
+    nc, mean, std, pos_weights = dataset_compute_stats(path, batch_size=batch_size)
     data["nc"] = nc
-
+    data["name"] = path.name
     data["train"] = "train/img"
 
     train = path / "train" / "img"
@@ -380,4 +376,3 @@ def dataset_write_config(path: str, batch_size: int = 32):
     data["std"] = std.tolist()
     data["pos_weights"] = pos_weights
     yaml_save(config, data)
-    print(data)

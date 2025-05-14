@@ -1,3 +1,4 @@
+import argparse
 from datetime import datetime
 import gc
 import io
@@ -116,12 +117,27 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
     return metrics
 
 
+def auto_naming(hyp):
+    """
+    Automatically generate a name for the training run based on hyperparameters.
+    """
+    name = f"model_{hyp.model}_dataset_{hyp.dataset}_imgsz_{hyp.image_sz}_criterion_{hyp.criterion}"
+    if hyp.pretrained:
+        name += "_pretrained" if not hyp.resume else "_resumed"
+
+    print(f"Auto-generated run name: {name}")
+    hyp.name = name
+    return hyp
+
 
 def train(hyp, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
-    pretrained = False
+    hyp.pretrained = False
     
-    data = dataset_read_config(hyp.dataset)  # dataset description
+    data_descriptor = Path(hyp.dataset) / "config.yaml"
+    data = dataset_read_config(data_descriptor)  # dataset description
+    hyp.dataset = data_descriptor["name"] # instead of the path use name for logging
+
     model = load_model(hyp.model, data, hyp)
     save_dir = Path(hyp.save_dir)
     
@@ -129,15 +145,11 @@ def train(hyp, tracker: Tracker = Tracker):
 
     # Check pretrained and resume
     weights = Path(hyp.weights) if hyp.weights else None
-    pretrained = weights and weights.exists()
-    hyp.resume = hyp.resume and pretrained
+    hyp.pretrained = weights is not None and weights.exists()
+    hyp.resume = hyp.resume and hyp.pretrained
 
-    # Rename run based on hyperparameters
-    hyp.name = f"model_{hyp.model}_dataset_{hyp.dataset}_imgsz_{hyp.image_sz}_criterion_{hyp.criterion}"
-    if pretrained:
-        hyp.name += "_pretrained" if not hyp.resume else "_resumed"
-
-    print(f"Run: f{hyp.name}")
+    if hyp.name is None:
+        hyp = auto_naming(hyp)
 
     if hyp.tracker == "wandb":
         tracker = WandbTracker(project=hyp.project, name=hyp.name, config=vars(hyp))
@@ -306,43 +318,45 @@ def model_checkpointing(
 
 
 if __name__ == "__main__":
-    hyp = dict(
-        model="unet",
-        project="landslide",
-        dataset="L4S",
-        name=None,
-        weights=None,  # model weights if using a pretrained model
-        resume=False,
-        image_sz=128,
-        mask_sz=128,
-        conf=0.5,
-        seed=1337,
-        save_period=-1,
-        deterministic=True,
-        batch=32,
-        workers=8,
-        monitor="valid/F1-Score",
-        patience=10,
-        mode="max",
-        val="valid",
-        weight_decay=5e-4,
-        ignore_index=None,  # or 255
-        criterion="weighted_binary_cross_entropy",
-        epochs=50,
-        normalize=True,  # not yet used
-        lr=1e-3,
-        device="mps:0",
-        tracker=None,
-        save_dir="./runs",
-    )
+    parser = argparse.ArgumentParser(description="Train a semantic segmentation model on landslide imagery using configurable hyperparameters."  )
+    # Model and dataset
+    parser.add_argument("--model", type=str, default="unet", help="Name of the model architecture to use (e.g., 'unet', 'fcn').")
+    parser.add_argument("--project", type=str, default="landslide", help="Project name for tracking and logging.")
+    parser.add_argument("--name", type=str, default=None, help="Name of the training run.")
+    parser.add_argument("--dataset", type=str, default="L4S", help="Identifier or path for the dataset configuration.")
+    parser.add_argument("--weights", type=str, default=None, help="Path to pretrained model weights to initialize training.")
+    parser.add_argument("--resume", action="store_true", help="Whether to resume training from existing weights checkpoint.")
 
-    import argparse
-    parser = argparse.ArgumentParser()
-    for k, v in hyp.items():
-        if v is None:
-            parser.add_argument(f"--{k}", default=v)
-        else:
-            parser.add_argument(f"--{k}", default=v, type=type(v))
-    hyp = vars(parser.parse_args())
-    hyp = IterableSimpleNamespace(**hyp)
+    # Training hyperparameters
+    parser.add_argument("--epochs", type=int, default=50, help="Total number of training epochs."
+    )
+    parser.add_argument("--batch", type=int, default=32, help="Batch size for training and validation.")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate for the optimizer.")
+    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay (L2 regularization) factor.")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducibility.") # Experiments were done setting seed to 1337
+    parser.add_argument("--deterministic", action="store_true", help="Enable deterministic behavior for reproducible results.")
+    parser.add_argument("--criterion", type=str, default="weighted_binary_cross_entropy", help="Loss criterion name (e.g., 'binary_cross_entropy', 'weighted_binary_cross_entropy', etc.).")
+
+    # Data settings
+    parser.add_argument("--image_sz", type=int, default=128, help="Input image spatial size (height and width).")
+    parser.add_argument("--mask_sz", type=int, default=128, help="Output mask spatial size.")
+    parser.add_argument("--normalize", action="store_true", help="Normalize input images using dataset mean and std.")
+
+    # Monitoring and early stopping
+    parser.add_argument("--monitor", type=str, default="valid/F1-Score", help="Metric name to monitor for model checkpointing and early stopping.")
+    parser.add_argument("--patience", type=int, default=10, help="Number of epochs with no improvement before early stopping.")
+    parser.add_argument("--mode", choices=["max", "min"], default="max", help="Mode for monitoring metric ('max' to maximize, 'min' to minimize).")
+
+    # Miscellaneous
+    parser.add_argument("--conf", type=float, default=0.5, help="Confidence threshold for converting logits to binary predictions.")
+    parser.add_argument("--workers", type=int, default=8, help="Number of dataloader worker processes.")
+    parser.add_argument("--device", type=str, default="cpu", help="Device identifier (e.g., 'cuda:0', 'cpu', 'mps:0').")
+    parser.add_argument("--save_dir", type=str, default="./runs", help="Directory where training runs and checkpoints will be saved.")
+    parser.add_argument("--save_period", type=int, default=-1, help="Epoch interval for periodic checkpoint saving (-1 to disable).")
+    parser.add_argument("--tracker", type=str, default=None, help="Tracker type for logging (e.g., 'wandb').")
+    parser.add_argument("--val", type=str, default="valid", help="Fold key to choose data for validation.")
+
+    args = parser.parse_args()
+    hyp = IterableSimpleNamespace(**vars(args))
+
     train(hyp)
