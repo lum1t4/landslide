@@ -26,15 +26,12 @@ stages:
     cmd:
       - python scripts/data_prepare_png.py --src data/raw/Ischia --dst data/processed/Ischia
       - python scripts/data_prepare_config.py --dataset data/processed/Ischia
-      - rm -rf data/raw/Ischia
     deps:
       - scripts/data_prepare_png.py
       - data/raw/Ischia
     outs:
       - data/processed/Ischia
 
-  land_anomalies:
+  land-anomalies:
     cmd:
-      - python scripts/data_prepare_png.py --src data/raw/land_anomalies --dst data/processed/land_anomalies
-      - python scripts/data_prepare_config.py --dataset data/processed/land_anomalies
-      - rm -rf data/raw/land_anomalies
+      - python scripts/data_loo_stratify.py --dataset data/raw/land-anomalies --destination data/processed

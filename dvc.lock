@@ -69,3 +69,7 @@ stages:
       md5: 8b25a98b9f3a651f180a66ff086c3c5d.dir
       size: 333284489
       nfiles: 1353
+  land-anomalies:
+    cmd:
+    - python scripts/data_loo_stratify.py --dataset data/raw/land-anomalies --destination
+      data/processed
