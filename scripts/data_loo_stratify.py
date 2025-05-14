@@ -1,9 +1,9 @@
-
 import argparse
 from collections import defaultdict
 import concurrent.futures
 import os
 from pathlib import Path
+import random
 from typing import List, Optional
 
 from landslide.data import dataset_write_config, get_images, img_to_mask
@@ -49,30 +49,42 @@ def _symlink_copy(src: List[Path], dst: Path, prefix: Optional[str] = None):
     """
     # Use ThreadPoolExecutor for I/O-bound tasks like file operations
     with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = [
-            executor.submit(_symlink_copy_image, img_src, dst, prefix)
-            for img_src in src
-        ]
+        futures = [executor.submit(_symlink_copy_image, img_src, dst, prefix) for img_src in src]
         concurrent.futures.wait(futures)
 
 
-def main(dataset_src: str, destination: str):
+def main(source: str, destination: str, valid: int = 2, seed: int = 0):
     """
-    This script takes main dataset folder (land-anomalies) and for each location ("A19_5cm", "Avigliano2", etc.)
-    creates a new folder with the following structure:
+    This script takes main dataset folder (land-anomalies) which has more or less the following structure:
+
+    ```
     {dataset}
-    │   {location}
-    │   ├── train # n - 1 of the locations
+    │   {location (e.g. "A19_5cm", "Avigliano2", etc.)}
+    │   ├── segmentation_512_512
     │   │   ├── img
     │   │   └── mask
-    │   └── valid # the chosen location
-    │       ├── img
-    │       └── mask
     ...
-
-    To avoid copying the same files multiple times, the script creates symbolic links to the original files.
-    The script also creates a config.yaml file with the following structure:
-
+    ```
+    and creates a new folder with the following structure:
+    ```
+    {dataset}
+    ├── {location}
+    │   ├── train # data from remainig (n - k - 1) locations 
+    │   │   ├── img
+    │   │   └── mask
+    │   └── valid # data from k randomly selected locations
+    │   │   ├── img
+    │   │   └── mask
+    │   └── test # data from the current location
+    │   │   ├── img
+    │   │   └── mask
+    │   └───config.yaml
+    ...
+    ```
+    To avoid duplicating files, the script creates symbolic links for images and masks.
+    The script also creates a config.yaml for each location in the destination folder so metrics like
+    mean, std, etc are computed beforhand:
+    Example of config.yaml:
     ```yaml
     name: {location_name}
     train: train/img
@@ -83,38 +95,60 @@ def main(dataset_src: str, destination: str):
     pos_weights: 1.0
     ```
     """
+    # Set random seed for reproducibility of validation selection
+    random.seed(seed)
 
-    dataset = "land-anomalies"
-
-    dataset_src = Path(dataset_src)
-    dataset_dst = Path(destination)
+    dataset_src = Path(source)  # ex. data/raw/land-anomalies
+    dataset_dst = Path(destination)  # ex. data/processed/land-anomalies
+    dataset_dst.mkdir(parents=True, exist_ok=True)
 
     assert dataset_src.exists(), f"Source dataset {dataset_src} does not exist"
-    assert dataset_dst.is_dir(), f"Destination folder {dataset_dst} does not exist or is not a directory"
-
-    dataset = dataset_src.name
-    dataset_dst = dataset_dst / dataset
+    assert dataset_dst.parent.is_dir(), (
+        f"Parent of destination folder {dataset_dst.parent} does not exist or is not a directory"
+    )
 
     imgs = defaultdict(list)
     for location in dataset_src.iterdir():
-        imgs[location.name] = list(map(Path, get_images(location / "segmentation_512_512" / "img")))
+        imgs[location.name] = list(
+            map(Path, get_images(location / "segmentation_512_512" / "img"))
+        )
 
     for location in dataset_src.iterdir():
         location_dst = dataset_dst / location.name
         print("Current location", location.name)
-        complementary_keys = imgs.keys() - {location.name} # n - 1 of the locations
-        # copy on train fold the complementary locations
-        for key in complementary_keys:
+        complementary_keys = set(imgs.keys()) - {location.name}
+
+        # Ensure the requested number of validation locations is valid
+        if valid > len(complementary_keys):
+            raise ValueError(
+                f"Number of validation locations ({valid}) is greater than available locations ({len(complementary_keys)})"
+            )
+
+        # Randomly select validation locations
+        validation_keys = random.sample(sorted(complementary_keys), valid) if valid > 0 else {}
+        # Remaining locations are for training
+        training_keys = sorted(complementary_keys - set(validation_keys))
+
+        # Symlink training images
+        for key in training_keys:
             _symlink_copy(imgs[key], location_dst / "train" / "img", prefix=key)
-        
-        # copy on validation fold the current location
-        _symlink_copy(imgs[location.name], location_dst / "valid" / "img", prefix=location.name)
+
+        # Symlink validation images
+        for key in validation_keys:
+            _symlink_copy(imgs[key], location_dst / "valid" / "img", prefix=key)
+
+        # Symlink test images (current location)
+        _symlink_copy(imgs[location.name], location_dst / "test" / "img")
+
+        # Create config.yaml for the current location
         dataset_write_config(location_dst)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Create a dataset for land-anomalies")
-    parser.add_argument("--dataset", type=str, help="The name of the dataset to create")
+    parser.add_argument("--source", type=str, help="Path to the dataset folder", required=True)
     parser.add_argument("--destination", type=str, help="The destination folder for the dataset")
+    parser.add_argument("--valid", type=int, default=0, help="Number of locations to use for validation set")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for selecting validation locations")
     args = parser.parse_args()
-    main(args.dataset, args.destination)
+    main(args.source, args.destination, args.valid, args.seed)

@@ -34,4 +34,4 @@ stages:
 
   land-anomalies:
     cmd:
-      - python scripts/data_loo_stratify.py --dataset data/raw/land-anomalies --destination data/processed
+      - python scripts/data_loo_stratify.py --source data/raw/land-anomalies --destination data/processed/land-anomalies --valid 2 --seed 1337

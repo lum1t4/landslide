@@ -130,7 +130,7 @@ def auto_naming(hyp):
     return hyp
 
 
-def train(hyp, tracker: Tracker = Tracker):
+def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     hyp.pretrained = False
     
@@ -316,9 +316,8 @@ def model_checkpointing(
         tracker.log_model(last, aliases=aliases)
 
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train a semantic segmentation model on landslide imagery using configurable hyperparameters."  )
+    parser = argparse.ArgumentParser(description="Train a semantic segmentation model on landslide imagery."  )
     # Model and dataset
     parser.add_argument("--model", type=str, default="unet", help="Name of the model architecture to use (e.g., 'unet', 'fcn').")
     parser.add_argument("--project", type=str, default="landslide", help="Project name for tracking and logging.")
