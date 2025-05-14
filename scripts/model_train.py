@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -121,7 +122,7 @@ def auto_naming(hyp):
     """
     Automatically generate a name for the training run based on hyperparameters.
     """
-    name = f"model_{hyp.model}_dataset_{hyp.dataset}_imgsz_{hyp.image_sz}_criterion_{hyp.criterion}"
+    name = f"model_{hyp.model}_dataset_{hyp.dataset.name}_imgsz_{hyp.image_sz}_criterion_{hyp.criterion}"
     if hyp.pretrained:
         name += "_pretrained" if not hyp.resume else "_resumed"
 
@@ -133,10 +134,8 @@ def auto_naming(hyp):
 def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     hyp.pretrained = False
-    
-    data_descriptor = Path(hyp.dataset) / "config.yaml"
-    data = dataset_read_config(data_descriptor)  # dataset description
-    hyp.dataset = data_descriptor["name"] # instead of the path use name for logging
+    hyp.dataset = Path(hyp.dataset)
+    data = dataset_read_config(hyp.dataset / "config.yaml")  # dataset description
 
     model = load_model(hyp.model, data, hyp)
     save_dir = Path(hyp.save_dir)
@@ -165,6 +164,8 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     # Define optimization components
     optimizer = torch.optim.Adam(model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay)
     mean, std = data["mean"], data["std"]
+
+    print(data["mean"], data["std"])
     
     train_set = LandslideDataset(
         data["train"],
@@ -258,7 +259,7 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
                 gt_mask = target.squeeze().cpu().numpy().astype(np.uint8) * 255
                 gt_image = img.cpu().numpy().transpose(1, 2, 0).astype(np.uint8)
                 pred_mask = pred.squeeze().cpu().numpy().astype(np.uint8) * 255
-                
+
                 table.add_data(
                     wandb.Image(gt_image, caption="Input Image"),
                     wandb.Image(gt_mask, caption="Ground Truth"),
@@ -266,8 +267,9 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
                 )
 
         # Log to wandb
-        tracker.log({"validation_samples": table})
+        tracker.log({"Validation Samples": table})
         print("Validation visualizations complete")
+        tracker.run.finish()
 
     return model
 

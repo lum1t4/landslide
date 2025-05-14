@@ -12,3 +12,12 @@ In particular, the produced model should achive a score greater than baseline on
 - numpy
 - pyyaml
 - torchvision
+
+
+## Training
+To train the model, run the following command:
+
+```bash
+python scripts/model_train.py --model "unet" --image_sz 128 --criterion "weigheted_binary_cross_entropy" --dataset "data/processed/L4S" --device "cuda:0" --epochs 3 --lr 1e-5 
+```
+Adjust the parameters as needed and in particular device according to available accelerators (currently tested only on cuda and mps)

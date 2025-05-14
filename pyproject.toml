@@ -27,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 wandb = [
-    "wandb>=0.19.8",
+    "wandb[media]>=0.19.11",
 ]
 
 [tool.black]
