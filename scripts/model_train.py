@@ -274,8 +274,9 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
                 preds = model(imgs)
                 preds = postprocess_predictions(preds, conf=hyp.conf)
 
-            imgs = imgs * std + mean
-            imgs = imgs * 255
+
+            if hyp.normalize:
+                imgs = (imgs * std + mean) * 255
             imgs = imgs.to(torch.uint8)
             
             for img, target, pred in zip(imgs, targets, preds):
