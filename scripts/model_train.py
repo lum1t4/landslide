@@ -16,13 +16,34 @@ from landslide.data import LandslideDataset, dataloader, dataset_read_config
 from landslide.dtypes import IterableSimpleNamespace
 from landslide.losses import AutoCriterion
 from landslide.metrics import BinaryConfusionMatrix
-from landslide.model import load_model
+from landslide.model import init_model
 from landslide.torch_utils import device_memory_clear, device_memory_used, init_seeds
 from landslide.trackers import _WANDB_AVAILABLE, Tracker, WandbTracker
 
 # Configure logger
 logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO)
+
+
+
+def intersect_dicts(da, db, exclude=()):
+    """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
+    return {
+        k: v
+        for k, v in da.items()
+        if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape
+    }
+    
+
+def load_model(model: nn.Module, weights: Path, verbose: bool = True) -> nn.Module:
+    from safetensors.torch import load_file
+    checkpoint = torch.load(weights, map_location="cpu") if not weights.name.endswith(".safetensors") else load_file(weights, device="cpu")
+    checkpoint = checkpoint["model"] if "model" in checkpoint else checkpoint
+    csd = intersect_dicts(checkpoint, model.state_dict())  # intersect
+    model.load_state_dict(csd, strict=False)  # load
+    if verbose:
+        print(f"Transferred {len(csd)}/{len(model.state_dict())} items from pretrained weights")
+    return model
 
 
 def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, optimizer):
@@ -35,10 +56,10 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
     names = [name[:5] + "..." if len(name) > 11 else name for name in criterion.names]
     key = "weighted_binary_cross_entropy"
     if key in criterion.names:
-        names[criterion.names.index(key)] = "wbce"
+        names[criterion.names.index(key)] = "WBCE"
     key = "binary_cross_entropy"
     if key in criterion.names:
-        names[criterion.names.index(key)] = "bce"
+        names[criterion.names.index(key)] = "BCE"
 
     print(("\n" + "%11s" * (5 + n_objectives)) % ("Epoch", "GPU_mem", "Loss", *names, "Instances", "Size"))
     mean_losses = torch.zeros(n_objectives, device=device)
@@ -49,9 +70,14 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
         imgs = imgs.to(device, non_blocking=True).float()
         optimizer.zero_grad()
         # Forward
+
+        print(imgs.shape)
         preds = model(imgs)  # (B, C, H, W) where C = number of classes
         preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
+
+        print(preds.shape, targets.shape)
         aggr_loss, losses = criterion(preds, targets.to(device, dtype=torch.float32))
+        print(aggr_loss.is_contiguous())
         aggr_loss.backward()
         optimizer.step()
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
@@ -137,13 +163,13 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     hyp.dataset = Path(hyp.dataset)
     data = dataset_read_config(hyp.dataset / "config.yaml")  # dataset description
 
-    model = load_model(hyp.model, data, hyp)
+    model = init_model(hyp.model, data, hyp)
     save_dir = Path(hyp.save_dir)
     
     device = torch.device(hyp.device)
 
     # Check pretrained and resume
-    weights = Path(hyp.weights) if hyp.weights else None
+    weights: Path = Path(hyp.weights) if hyp.weights else None
     hyp.pretrained = weights is not None and weights.exists()
     hyp.resume = hyp.resume and hyp.pretrained
 
@@ -199,6 +225,10 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     fitness = float("-inf") if hyp.mode == "max" else float("inf")
     best_epoch = 0
 
+
+    if hyp.pretrained and not hyp.resume:
+        model = load_model(model, weights, verbose=True)
+        
     if hyp.resume:
         checkpoint = torch.load(weights, map_location="cpu")
         model.load_state_dict(checkpoint["model"])
@@ -268,9 +298,8 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
 
         # Log to wandb
         tracker.log({"Validation Samples": table})
+        tracker.finish()
         print("Validation visualizations complete")
-        tracker.run.finish()
-
     return model
 
 
@@ -299,29 +328,29 @@ def model_checkpointing(
     ckpt = buffer.getvalue()
 
     # last
+    aliases = ["last"]
     last = save_dir / "last.pth"
     last.write_bytes(ckpt)
 
     if epoch == best_epoch:
         best = save_dir / "best.pth"
         best.write_bytes(ckpt)
+        aliases.append("best")
 
     if (hyp.save_period > 0) and (epoch % hyp.save_period == 0):
-        (save_dir / f"epoch_{epoch}.pt").write_bytes(
-            ckpt
-        )  # save epoch, i.e. 'epoch_3.pt'
+        # save epoch, i.e. 'epoch_3.pt'
+        (save_dir / f"epoch_{epoch}.pt").write_bytes(ckpt)
+        # add alias (Currently disabled to save space)
+        # aliases.append(f"epoch_{epoch + 1}")
 
     if tracker:
-        aliases = ["last", f"epoch_{epoch+1}"]
-        if epoch == best_epoch:
-            aliases.append("best")
         tracker.log_model(last, aliases=aliases)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a semantic segmentation model on landslide imagery."  )
     # Model and dataset
-    parser.add_argument("--model", type=str, default="unet", help="Name of the model architecture to use (e.g., 'unet', 'fcn').")
+    parser.add_argument("--model", type=str, default="unet", choices=["unet", "segformer"], help="Name of the model architecture to use (e.g., 'unet', 'fcn').")
     parser.add_argument("--project", type=str, default="landslide", help="Project name for tracking and logging.")
     parser.add_argument("--name", type=str, default=None, help="Name of the training run.")
     parser.add_argument("--dataset", type=str, default="L4S", help="Identifier or path for the dataset configuration.")

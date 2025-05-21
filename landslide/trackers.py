@@ -32,6 +32,10 @@ class Tracker:
     def log_model(self, checkpoint: Path, aliases: List[str] = ["last"]):
         pass
 
+    @rank_zero_only
+    def finish(self):
+        pass
+
 
 class WandbTracker(Tracker):
     def __init__(self, project: str, name: str, config: dict):
@@ -58,3 +62,10 @@ class WandbTracker(Tracker):
             artifact = wandb.Artifact(f"run_{wandb.run.id}_model", type="model")
             artifact.add_file(checkpoint, name=checkpoint.name)
             wandb.run.log_artifact(artifact, aliases=aliases)
+
+    @rank_zero_only
+    def finish(self):
+        if _WANDB_AVAILABLE:
+            wandb.finish()
+        else:
+            raise ImportError("wandb is not available. Please install it to use WandbTracker.")

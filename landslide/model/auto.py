@@ -4,7 +4,7 @@ from .segformer import SegformerConfig, SegformerForSemanticSegmentation
 from .unet import UNet
 
 
-def load_model(model: str, data: dict, hyp: IterableSimpleNamespace):
+def init_model(model: str, data: dict, hyp: IterableSimpleNamespace):
     # Load the model
     out_channels = nc = data.get("nc", 1)
     in_channels = len(data["mean"])
