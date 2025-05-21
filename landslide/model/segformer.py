@@ -387,6 +387,7 @@ class SegformerDecodeHead(nn.Module):
             hidden_states.append(feat)
 
         x = self.linear_fuse(torch.cat(hidden_states[::-1], dim=1))
+        x = x.contiguous()
         x = self.batch_norm(x)
         x = self.activation(x)
         x = self.dropout(x)

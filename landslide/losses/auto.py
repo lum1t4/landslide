@@ -78,9 +78,8 @@ class AutoCriterion(nn.Module):
         losses = torch.zeros(len(self.names), device=preds.device)
         aggr_loss = torch.zeros(1, device=preds.device)
 
-        for i, (weight, loss_fn) in enumerate(zip(self.weights, self.losses)):
-            losses[i] = weight * loss_fn(preds, targets)
-            aggr_loss += losses[i]
+        losses = torch.stack([w * fn(preds, targets) for w, fn in zip(self.weights, self.losses)])
+        aggr_loss = losses.sum()
         return aggr_loss, losses
 
 

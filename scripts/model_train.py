@@ -47,7 +47,6 @@ def load_model(model: nn.Module, weights: Path, verbose: bool = True) -> nn.Modu
 
 
 def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, optimizer):
-    
     running_loss = 0.0
     n_objectives = len(criterion)
 
@@ -71,14 +70,11 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
         optimizer.zero_grad()
         # Forward
 
-        print(imgs.shape)
         preds = model(imgs)  # (B, C, H, W) where C = number of classes
         preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
-
-        print(preds.shape, targets.shape)
         aggr_loss, losses = criterion(preds, targets.to(device, dtype=torch.float32))
-        print(aggr_loss.is_contiguous())
         aggr_loss.backward()
+
         optimizer.step()
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
         mean_losses = (mean_losses * i + losses) / (i + 1)
@@ -190,8 +186,6 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     # Define optimization components
     optimizer = torch.optim.Adam(model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay)
     mean, std = data["mean"], data["std"]
-
-    print(data["mean"], data["std"])
     
     train_set = LandslideDataset(
         data["train"],
