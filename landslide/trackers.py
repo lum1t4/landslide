@@ -39,6 +39,8 @@ class WandbTracker(Tracker):
         self.run = None
         if _WANDB_AVAILABLE:
             self.run = wandb.init(project=project, name=name, config=config, allow_val_change=True)
+            if "monitor" in config and "mode" in config:
+                self.run.define_metric(config["monitor"], summary=config["mode"])
     
     @rank_zero_only
     def log(self, x, y = None, step: int = None):
