@@ -254,6 +254,7 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,windows,macos
 
 # Project specific
-/data/
-
+data/processed/
+data/external/
+runs/
 wandb/
