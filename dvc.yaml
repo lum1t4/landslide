@@ -1,25 +1,25 @@
 stages:
   L4S:
     cmd:
+      - unzip -o data/raw/L4S.zip -d data/raw
       - python scripts/data_prepare_L4S.py --src data/raw/L4S --dst data/processed/L4S
       - python scripts/data_prepare_config.py --dataset data/processed/L4S
-      - rm -rf data/raw/L4S
     deps:
       - scripts/data_prepare_L4S.py
-      - data/raw/L4S
+      - data/raw/L4S.zip
     outs:
       - data/processed/L4S
   A19:
     cmd:
+      - unzip -o data/raw/A19.zip -d data/raw
       - python scripts/data_prepare_split.py --src data/raw/A19 --dst data/interim/A19
       - python scripts/data_prepare_png.py --src data/interim/A19 --dst data/processed/A19
       - rm -rf data/interim/A19
       - python scripts/data_prepare_config.py --dataset data/processed/A19
-      - rm -rf data/raw/A19
     deps:
       - scripts/data_prepare_split.py
       - scripts/data_prepare_png.py
-      - data/raw/A19
+      - data/raw/A19.zip
     outs:
       - data/processed/A19
   Ischia:
@@ -28,10 +28,16 @@ stages:
       - python scripts/data_prepare_config.py --dataset data/processed/Ischia
     deps:
       - scripts/data_prepare_png.py
-      - data/raw/Ischia
+      - data/raw/Ischia.zip
     outs:
       - data/processed/Ischia
 
   land-anomalies:
     cmd:
+      - unzip -o data/raw/land-anomalies.zip -d data/raw
       - python scripts/data_loo_stratify.py --source data/raw/land-anomalies --destination data/processed/land-anomalies --valid 2 --seed 1337
+    deps:
+      - scripts/data_loo_stratify.py
+      - data/raw/land-anomalies.zip
+    outs:
+      - data/processed/land-anomalies

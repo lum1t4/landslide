@@ -108,12 +108,18 @@ def main(source: str, destination: str, valid: int = 2, seed: int = 0):
     )
 
     imgs = defaultdict(list)
-    for location in dataset_src.iterdir():
+
+    locations = [l for l in dataset_src.iterdir() if l.is_dir()]
+
+    for location in locations:
+        if not location.is_dir():
+            continue
         imgs[location.name] = list(
             map(Path, get_images(location / "segmentation_512_512" / "img"))
         )
 
-    for location in dataset_src.iterdir():
+    for location in locations:
+
         location_dst = dataset_dst / location.name
         print("Current location", location.name)
         complementary_keys = set(imgs.keys()) - {location.name}

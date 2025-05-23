@@ -160,7 +160,7 @@ class SegmentationDataset(Dataset):
         return len(self.images)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        img = Image.open(self.images[idx])
+        img = Image.open(self.images[idx]).convert("RGB")
         mask_path = self.img_to_mask_fn(self.images[idx])
         if self.masks is not None:
             mask_path = self.masks[idx]
@@ -354,8 +354,12 @@ def dataset_write_config(path: str, batch_size: int = 32):
     path = Path(path)
     config = path / "config.yaml"
     data = yaml_load(config) if config.exists() else {}
+
     nc, mean, std, pos_weights = dataset_compute_stats(path, batch_size=batch_size)
     data["nc"] = nc
+    data["mean"] = mean.tolist()
+    data["std"] = std.tolist()
+    data["pos_weights"] = pos_weights
     data["name"] = path.name
     data["train"] = "train/img"
 
@@ -372,7 +376,4 @@ def dataset_write_config(path: str, batch_size: int = 32):
     elif test.exists():
         data["valid"] = test.relative_to(path).as_posix()
 
-    data["mean"] = mean.tolist()
-    data["std"] = std.tolist()
-    data["pos_weights"] = pos_weights
     yaml_save(config, data)
