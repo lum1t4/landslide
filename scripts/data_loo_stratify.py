@@ -109,7 +109,7 @@ def main(source: str, destination: str, valid: int = 2, seed: int = 0):
 
     imgs = defaultdict(list)
 
-    locations = [l for l in dataset_src.iterdir() if l.is_dir()]
+    locations = [location for location in dataset_src.iterdir() if location.is_dir()]
 
     for location in locations:
         if not location.is_dir():
