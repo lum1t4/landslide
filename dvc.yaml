@@ -35,7 +35,7 @@ stages:
   land-anomalies:
     cmd:
       - unzip -o data/raw/land-anomalies.zip -d data/raw
-      - python scripts/data_loo_stratify.py --source data/raw/land-anomalies --destination data/processed/land-anomalies --valid 2 --seed 1337
+      - python scripts/data_loo_stratify.py --source data/raw/land-anomalies --destination data/processed/land-anomalies --valid 2 --seed 42
     deps:
       - scripts/data_loo_stratify.py
       - data/raw/land-anomalies.zip
