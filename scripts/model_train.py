@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO)
 
 
-
 def intersect_dicts(da, db, exclude=()):
     """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
     return {
@@ -32,11 +31,16 @@ def intersect_dicts(da, db, exclude=()):
         for k, v in da.items()
         if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape
     }
-    
+
 
 def load_model(model: nn.Module, weights: Path, verbose: bool = True) -> nn.Module:
     from safetensors.torch import load_file
-    checkpoint = torch.load(weights, map_location="cpu") if not weights.name.endswith(".safetensors") else load_file(weights, device="cpu")
+
+    checkpoint = (
+        torch.load(weights, map_location="cpu")
+        if not weights.name.endswith(".safetensors")
+        else load_file(weights, device="cpu")
+    )
     checkpoint = checkpoint["model"] if "model" in checkpoint else checkpoint
     csd = intersect_dicts(checkpoint, model.state_dict())  # intersect
     model.load_state_dict(csd, strict=False)  # load
@@ -45,7 +49,7 @@ def load_model(model: nn.Module, weights: Path, verbose: bool = True) -> nn.Modu
     return model
 
 
-def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, optimizer):
+def model_train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, optimizer):
     running_loss = 0.0
     n_objectives = len(criterion)
 
@@ -59,9 +63,11 @@ def train_epoch(model, hyp, loader, epoch, criterion: AutoCriterion, device, opt
     if key in criterion.names:
         names[criterion.names.index(key)] = "BCE"
 
-    print(("\n" + "%11s" * (5 + n_objectives)) % ("Epoch", "GPU_mem", "Loss", *names, "Instances", "Size"))
+    print(
+        ("\n" + "%11s" * (5 + n_objectives))
+        % ("Epoch", "GPU_mem", "Loss", *names, "Instances", "Size")
+    )
     mean_losses = torch.zeros(n_objectives, device=device)
-
 
     progress = tqdm.tqdm(enumerate(loader), total=len(loader))
     for i, (imgs, targets) in progress:
@@ -103,7 +109,7 @@ def postprocess_predictions(preds: torch.Tensor, conf: float = 0.5):
 
 
 @torch.inference_mode()
-def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
+def model_valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
     running_loss = 0.0
 
     n_objectives = len(criterion)
@@ -116,9 +122,7 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
     progress = tqdm.tqdm(enumerate(loader), total=len(loader))
     for i, (imgs, targets) in progress:
         imgs = imgs.to(device, non_blocking=True)
-        targets = targets.to(
-            device, non_blocking=True, dtype=torch.float32
-        )  # TODO: remove dtype
+        targets = targets.to(device, non_blocking=True, dtype=torch.float32)  # TODO: remove dtype
         preds = model(imgs)  # (B, C, H, W) where C = number of classes
         preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
         aggr_loss, losses = criterion(preds, targets)
@@ -131,7 +135,7 @@ def valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
         # update description with conf matrix
         progress.set_description(("%11.4g" * 4) % tuple(confmat.metrics().values()))
 
-    metrics = {"valid/loss": running_loss }
+    metrics = {"valid/loss": running_loss}
     metrics = {**metrics, **confmat.metrics(prefix="valid/")}
     for name, loss in zip(criterion.names, mean_losses):
         metrics[f"valid/{name}"] = loss.item()
@@ -160,7 +164,7 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
 
     model = init_model(hyp.model, data, hyp)
     save_dir = Path(hyp.save_dir)
-    
+
     device = torch.device(hyp.device)
 
     # Check pretrained and resume
@@ -185,7 +189,7 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     # Define optimization components
     optimizer = torch.optim.Adam(model.parameters(), lr=hyp.lr, weight_decay=hyp.weight_decay)
     mean, std = data["mean"], data["std"]
-    
+
     train_set = LandslideDataset(
         data["train"],
         image_sz=hyp.image_sz,
@@ -207,8 +211,8 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
         f"Training on {len(train_set)} samples with imgsz {hyp.image_sz} "
         f"and validating on {len(valid_set)} samples."
     )
-    train_loader = dataloader(train_set, hyp.batch, workers, hyp.image_sz, mode="train")
-    valid_loader = dataloader(valid_set, hyp.batch, workers, hyp.image_sz, mode="valid")
+    train_loader = dataloader(train_set, hyp.batch, workers, True, mode="train")
+    valid_loader = dataloader(valid_set, hyp.batch, workers, False, mode="valid")
 
     start_epoch = 0
 
@@ -218,10 +222,9 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     fitness = float("-inf") if hyp.mode == "max" else float("inf")
     best_epoch = 0
 
-
     if hyp.pretrained and not hyp.resume:
         model = load_model(model, weights, verbose=True)
-        
+
     if hyp.resume:
         checkpoint = torch.load(weights, map_location="cpu")
         model.load_state_dict(checkpoint["model"])
@@ -234,20 +237,20 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
 
     model = model.to(device)
     for epoch in range(start_epoch, hyp.epochs):
-        print(f"Epoch {epoch+1}/{hyp.epochs}")
+        print(f"Epoch {epoch + 1}/{hyp.epochs}")
         # If you want training metrics (in addition to loss) pass compute_metrics=True.
         model.train()
-        train_metrics = train_epoch(
-            model, hyp, train_loader, epoch, criterion, device, optimizer
-        )
+        train_metrics = model_train_epoch(model, hyp, train_loader, epoch, criterion, device, optimizer)
         model.eval()
-        valid_metrics = valid_epoch(model, hyp, valid_loader, epoch, criterion, device)
+        valid_metrics = model_valid_epoch(model, hyp, valid_loader, epoch, criterion, device)
         device_memory_clear(device)
         gc.collect()
         metrics = {**train_metrics, **valid_metrics}
         tracker.log(metrics, step=epoch)
+
         def cmp(x, y):
             return x >= y if hyp.mode == "max" else x <= y
+
         if cmp(metrics[hyp.monitor], fitness):
             fitness = metrics[hyp.monitor]
             best_epoch = epoch
@@ -255,30 +258,53 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
             model, optimizer, epoch, metrics, hyp, weights_dir, best_epoch, tracker
         )
         if (epoch - best_epoch) == hyp.patience:
-            print(f"Early stopping at epoch {epoch+1}")
+            print(f"Early stopping at epoch {epoch + 1}")
             break
+    model_test(model, hyp, data, device, tracker)
+
+    return model
+
+
+def model_test(
+    model: nn.Module,
+    hyp: IterableSimpleNamespace,
+    data: dict,
+    device: torch.device,
+    tracker: Tracker = Tracker,
+):
+    test_set = LandslideDataset(
+        data[hyp.test],
+        image_sz=hyp.image_sz,
+        mask_sz=hyp.mask_sz,
+        do_normalize=hyp.normalize,
+        mean=data["mean"],
+        std=data["std"],
+    )
+    test_loader = dataloader(test_set, hyp.batch, hyp.workers, False, mode="valid")
+
+    # TODO: log F1, TP, TN, FP, FN, etc. for test set
 
     # Visualize validation predictions at the end of training
     if hyp.tracker == "wandb" and _WANDB_AVAILABLE:
         import wandb
+
         print("Generating validation visualizations for Wandb...")
         model.eval()
         table = wandb.Table(columns=["Image", "Ground Truth", "Prediction"])
         mean = torch.tensor(data["mean"]).view(3, 1, 1).to(device)
         std = torch.tensor(data["std"]).view(3, 1, 1).to(device)
 
-        for imgs, targets in valid_loader:
+        for imgs, targets in test_loader:
             imgs = imgs.to(device)
             targets = targets.to(device)
             with torch.inference_mode():
                 preds = model(imgs)
                 preds = postprocess_predictions(preds, conf=hyp.conf)
 
-
             if hyp.normalize:
                 imgs = (imgs * std + mean) * 255
             imgs = imgs.to(torch.uint8)
-            
+
             for img, target, pred in zip(imgs, targets, preds):
                 gt_mask = target.squeeze().cpu().numpy().astype(np.uint8) * 255
                 gt_image = img.cpu().numpy().transpose(1, 2, 0).astype(np.uint8)
@@ -294,7 +320,6 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
         tracker.log({"Validation Samples": table})
         tracker.finish()
         print("Validation visualizations complete")
-    return model
 
 
 def model_checkpointing(
@@ -354,12 +379,6 @@ if __name__ == "__main__":
     # Training hyperparameters
     parser.add_argument("--epochs", type=int, default=50, help="Total number of training epochs."
     )
-    parser.add_argument("--batch", type=int, default=32, help="Batch size for training and validation.")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate for the optimizer.")
-    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay (L2 regularization) factor.")
-    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducibility.") # Experiments were done setting seed to 1337
-    parser.add_argument("--deterministic", action="store_true", help="Enable deterministic behavior for reproducible results.")
-    parser.add_argument("--criterion", type=str, default="weighted_binary_cross_entropy", help="Loss criterion name (e.g., 'binary_cross_entropy', 'weighted_binary_cross_entropy', etc.).")
 
     # Data settings
     parser.add_argument("--image_sz", type=int, default=128, help="Input image spatial size (height and width).")
@@ -379,7 +398,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_period", type=int, default=-1, help="Epoch interval for periodic checkpoint saving (-1 to disable).")
     parser.add_argument("--tracker", type=str, default=None, help="Tracker type for logging (e.g., 'wandb').")
     parser.add_argument("--val", type=str, default="valid", help="Fold key to choose data for validation.")
-
+    parser.add_argument("--test", type=str, default="test", help="Fold key to choose data for testing.")
     args = parser.parse_args()
     hyp = IterableSimpleNamespace(**vars(args))
 
