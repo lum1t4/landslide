@@ -207,6 +207,10 @@ class BinaryConfusionMatrix:
 
     def metrics(self, prefix: Optional[str] = ""):
         return {
+            f"{prefix}True Positives": self.tp,
+            f"{prefix}False Positives": self.fp,
+            f"{prefix}False Negatives": self.fn,
+            f"{prefix}True Negatives": self.tn,
             f"{prefix}Precision": self.precision,
             f"{prefix}Recall": self.recall,
             f"{prefix}Accuracy": self.accuracy,
