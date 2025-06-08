@@ -72,20 +72,20 @@ stages:
   land-anomalies:
     cmd:
     - unzip -o data/raw/land-anomalies.zip -d data/raw
-    - python scripts/data_loo_stratify.py --source data/raw/land-anomalies --destination
-      data/processed/land-anomalies --valid 2 --seed 42
+    - uv run scripts/data_stratify_with_index.py --source data/raw/land-anomalies
+      --destination data/processed/land-anomalies --index data/interim/csv_split
     deps:
     - path: data/raw/land-anomalies.zip
       hash: md5
       md5: 16a9f458bf6647fed6b57f51899e5fa6
       size: 15503875664
-    - path: scripts/data_loo_stratify.py
+    - path: scripts/data_stratify_with_index.py
       hash: md5
-      md5: 93e46ea7c961b7210e19892458cb4f4e
-      size: 6027
+      md5: 940df9161918368c33bd46b4d90e5e67
+      size: 5583
     outs:
     - path: data/processed/land-anomalies
       hash: md5
-      md5: 1583327cacc6fee4bc88238d146ffa53.dir
-      size: 409590867038
+      md5: 82842f52ee5983935c5226c1494bfa86.dir
+      size: 409590867037
       nfiles: 613426
