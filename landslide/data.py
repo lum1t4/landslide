@@ -48,7 +48,16 @@ def get_images(path: str | Path, prefix="⚠️"):
 
 def img_to_mask(im: Path) -> Path:
     """by default suppose img is under image folder which as sibling mask folder where mask is located"""
-    return im.parent.parent.joinpath("mask", im.name.replace("image", "mask"))
+    parts = list(im.parts)
+    
+    # Start from the second last element and move up (closest to leaf first)
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i].lower() in ("image", "img"):
+            parts[i] = "mask"
+            return Path(*parts)
+    
+    # If no match found, return the path unchanged
+    return im
 
 
 def reduce_label(label: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
@@ -241,7 +250,7 @@ def dataloader(
         shuffle=shuffle,
         sampler=sampler,
         num_workers=nw,
-        pin_memory=pin_memory,
+        pin_memory=pin_memory if not torch.backends.mps.is_available() else False, # MPS does not support pin_memory
         collate_fn=collate_fn,
         worker_init_fn=seed_worker,
         generator=generator,
