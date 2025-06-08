@@ -281,8 +281,8 @@ def model_test(
         std=data["std"],
     )
     test_loader = dataloader(test_set, hyp.batch, hyp.workers, False, mode="valid")
-
-    # TODO: log F1, TP, TN, FP, FN, etc. for test set
+    confmat = BinaryConfusionMatrix()
+    confmat.to(device)
 
     # Visualize validation predictions at the end of training
     if hyp.tracker == "wandb" and _WANDB_AVAILABLE:
@@ -300,7 +300,9 @@ def model_test(
             with torch.inference_mode():
                 preds = model(imgs)
                 preds = postprocess_predictions(preds, conf=hyp.conf)
-
+                targets = targets.long()
+                confmat(preds, targets)
+                
             if hyp.normalize:
                 imgs = (imgs * std + mean) * 255
             imgs = imgs.to(torch.uint8)
@@ -317,7 +319,8 @@ def model_test(
                 )
 
         # Log to wandb
-        tracker.log({"Validation Samples": table})
+        metrics = {"Validation Samples": table, **confmat.metrics(prefix="test/")}
+        tracker.log(metrics)
         tracker.finish()
         print("Validation visualizations complete")
 
