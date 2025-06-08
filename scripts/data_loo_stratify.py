@@ -18,8 +18,7 @@ def _symlink_copy_image(img_src: Path, dst: Path, prefix: Optional[str] = None):
         dst (Path): Destination folder where symlinks will be created.
         prefix (Optional[str]): Optional prefix for the symlink filename.
     """
-    w_prefix = f"{prefix}-{img_src.name}" if prefix else img_src.name
-    img_dst = dst / w_prefix
+    img_dst = dst / prefix / img_src.name if prefix else dst / img_src.name
     mask_src = img_to_mask(img_src)
     mask_dst = img_to_mask(img_dst)
 
@@ -83,7 +82,7 @@ def main(source: str, destination: str, valid: int = 2, seed: int = 0):
     ```
     To avoid duplicating files, the script creates symbolic links for images and masks.
     The script also creates a config.yaml for each location in the destination folder so metrics like
-    mean, std, etc are computed beforhand:
+    mean, std, etc are computed beforhand training:
     Example of config.yaml:
     ```yaml
     name: {location_name}
