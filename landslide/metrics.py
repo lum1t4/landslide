@@ -196,6 +196,7 @@ class BinaryConfusionMatrix:
     @property
     def accuracy(self):
         return (self.tp + self.tn) / (self.tp + self.tn + self.fp + self.fn + 1e-7)
+    
     @property
     def f1(self):
         precision = self.precision
