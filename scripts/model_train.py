@@ -133,7 +133,8 @@ def model_valid_epoch(model: nn.Module, hyp, loader, epoch, criterion, device):
         mean_losses = (mean_losses * i + losses.detach()) / (i + 1)
 
         # update description with conf matrix
-        progress.set_description(("%11.4g" * 4) % tuple(confmat.metrics().values()))
+        description = list(confmat.metrics().values())[-4:]
+        progress.set_description(("%11.4g" * 4) % tuple(description))
 
     metrics = {"valid/loss": running_loss}
     metrics = {**metrics, **confmat.metrics(prefix="valid/")}
@@ -380,8 +381,13 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true", help="Whether to resume training from existing weights checkpoint.")
 
     # Training hyperparameters
-    parser.add_argument("--epochs", type=int, default=50, help="Total number of training epochs."
-    )
+    parser.add_argument("--epochs", type=int, default=50, help="Total number of training epochs.")
+    parser.add_argument("--batch", type=int, default=32, help="Batch size for training and validation.")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate for the optimizer.")
+    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay (L2 regularization) factor.")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducibility.") # Experiments were done setting seed to 1337
+    parser.add_argument("--deterministic", action="store_true", help="Enable deterministic behavior for reproducible results.")
+    parser.add_argument("--criterion", type=str, default="weighted_binary_cross_entropy", help="Loss criterion name (e.g., 'binary_cross_entropy', 'weighted_binary_cross_entropy', etc.).")
 
     # Data settings
     parser.add_argument("--image_sz", type=int, default=128, help="Input image spatial size (height and width).")
