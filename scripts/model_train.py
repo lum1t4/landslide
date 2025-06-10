@@ -283,7 +283,7 @@ def model_test(
     )
     test_loader = dataloader(test_set, hyp.batch, hyp.workers, False, mode="valid")
     confmat = BinaryConfusionMatrix()
-    confmat.to(device)
+    confmat
 
     # Visualize validation predictions at the end of training
     if hyp.tracker == "wandb" and _WANDB_AVAILABLE:
@@ -292,16 +292,17 @@ def model_test(
         print("Generating validation visualizations for Wandb...")
         model.eval()
         table = wandb.Table(columns=["Image", "Ground Truth", "Prediction"])
-        mean = torch.tensor(data["mean"]).view(3, 1, 1).to(device)
-        std = torch.tensor(data["std"]).view(3, 1, 1).to(device)
-
+        mean = torch.tensor(data["mean"]).view(3, 1, 1)
+        std = torch.tensor(data["std"]).view(3, 1, 1)
+        
         for imgs, targets in test_loader:
-            imgs = imgs.to(device)
-            targets = targets.to(device)
             with torch.inference_mode():
+                imgs = imgs.to(device, non_blocking=True)
                 preds = model(imgs)
+                preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
                 preds = postprocess_predictions(preds, conf=hyp.conf)
-                targets = targets.long()
+                preds = preds.long().cpu()
+                imgs = imgs.cpu()
                 confmat(preds, targets)
                 
             if hyp.normalize:
@@ -309,9 +310,9 @@ def model_test(
             imgs = imgs.to(torch.uint8)
 
             for img, target, pred in zip(imgs, targets, preds):
-                gt_mask = target.squeeze().cpu().numpy().astype(np.uint8) * 255
-                gt_image = img.cpu().numpy().transpose(1, 2, 0).astype(np.uint8)
-                pred_mask = pred.squeeze().cpu().numpy().astype(np.uint8) * 255
+                gt_mask = target.squeeze().numpy().astype(np.uint8) * 255
+                gt_image = img.numpy().transpose(1, 2, 0).astype(np.uint8)
+                pred_mask = pred.squeeze().numpy().astype(np.uint8) * 255
 
                 table.add_data(
                     wandb.Image(gt_image, caption="Input Image"),
