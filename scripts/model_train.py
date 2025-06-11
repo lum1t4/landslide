@@ -283,7 +283,6 @@ def model_test(
     )
     test_loader = dataloader(test_set, hyp.batch, hyp.workers, False, mode="valid")
     confmat = BinaryConfusionMatrix()
-    confmat
 
     # Visualize validation predictions at the end of training
     if hyp.tracker == "wandb" and _WANDB_AVAILABLE:

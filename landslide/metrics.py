@@ -134,7 +134,7 @@ class BinaryConfusionMatrix:
         self.threshold = threshold
         self.ignore_index = ignore_index
         self.normalize = normalize
-        self.confmat = torch.zeros(2, 2, dtype=torch.long)
+        self.confmat = torch.zeros(2, 2, dtype=torch.long) # [TN, FP, FN, TP]
 
     def to(self: Self, device: torch.device) -> Self:
         """Move the confusion matrix to a device."""
