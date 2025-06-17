@@ -320,7 +320,7 @@ def model_test(
                 )
 
         # Log to wandb
-        metrics = {"Validation Samples": table, **confmat.metrics(prefix="test/")}
+        metrics = {"test/predictions": table, **confmat.metrics(prefix="test/")}
         tracker.log(metrics)
         tracker.finish()
         print("Validation visualizations complete")
