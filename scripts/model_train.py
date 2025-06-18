@@ -167,6 +167,8 @@ def model_test(
 ):  
     if not (_WANDB_AVAILABLE and hyp.tracker == "wandb"):
         return
+    
+    print("Testing the model...")
     import wandb
     test_set = LandslideDataset(
         data[hyp.test],
@@ -184,6 +186,7 @@ def model_test(
         confmat = BinaryConfusionMatrix()
         model = init_model(hyp.model, data, hyp)
         model = load_model(model, model_path, verbose=True)
+        model = model.to(device)
         model.eval()
         table = wandb.Table(columns=["Image", "Ground Truth", "Prediction"])
         mean = torch.tensor(data["mean"]).view(3, 1, 1)
@@ -216,6 +219,8 @@ def model_test(
         # Log to wandb
         metrics = {f"test/{model_path.stem}-predictions": table, **confmat.metrics(prefix=f"test/{model_path.stem}/")}
         tracker.log(metrics)
+        device_memory_clear(device)
+        gc.collect()
     tracker.finish()
 
 
@@ -350,8 +355,6 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
         train_metrics = model_train_epoch(model, hyp, train_loader, epoch, criterion, device, optimizer)
         model.eval()
         valid_metrics = model_valid_epoch(model, hyp, valid_loader, epoch, criterion, device)
-        device_memory_clear(device)
-        gc.collect()
         metrics = {**train_metrics, **valid_metrics}
         tracker.log(metrics, step=epoch)
 
@@ -364,6 +367,9 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
         model_checkpointing(
             model, optimizer, epoch, metrics, hyp, weights_dir, best_epoch, tracker
         )
+
+        device_memory_clear(device)
+        gc.collect()
         if (epoch - best_epoch) == hyp.patience:
             print(f"Early stopping at epoch {epoch + 1}")
             break
