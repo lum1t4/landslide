@@ -65,10 +65,10 @@ class AutoCriterion(nn.Module):
             return BinaryFocalLossWithLogits(alpha=0.75, gamma=2.0)
         elif name == "lovasz_hinge_loss" or name == "lovasz_loss" or name == "lovasz":
             return LovaszHingeLoss()
-        elif name == "weighted_binary_cross_entropy":
+        elif name == "weighted_binary_cross_entropy" or name == "wbce":
             pos_weight = torch.tensor(data["pos_weights"]).reshape(nc, 1, 1).to(device)
             return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        elif name == "dice_loss":
+        elif name == "dice_loss" or name == "dice":
             return BinaryDiceLoss()
         else:
             print(f"[WARN] Unknown criterion: {name}, using BCEWithLogitsLoss instead.")

@@ -1,11 +1,9 @@
 import argparse
-from dataclasses import dataclass, field
 from datetime import datetime
 import gc
 import io
 import logging
 from pathlib import Path
-from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -289,6 +287,8 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
 
     if hyp.tracker == "wandb":
         tracker = WandbTracker(project=hyp.project, name=hyp.name, config=vars(hyp))
+        tracker.run.define_metric("valid/F1-score", summary="max")
+        tracker.run.define_metric("test/F1-score", summary="max")
     else:
         tracker = Tracker(hyp)
     nc = data.get("nc", 1)
