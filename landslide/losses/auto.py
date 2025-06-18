@@ -59,11 +59,11 @@ class AutoCriterion(nn.Module):
 
     def parse_instance(self, name: str, model, hyp, data, device) -> nn.Module:
         nc = data.get("nc", 1)
-        if name == "binary_cross_entropy":
+        if name == "binary_cross_entropy" or name == "bce":
             return nn.BCEWithLogitsLoss()
         elif name == "focal_loss":
             return BinaryFocalLossWithLogits(alpha=0.75, gamma=2.0)
-        elif name == "lovasz_hinge_loss" or name == "lovasz_loss":
+        elif name == "lovasz_hinge_loss" or name == "lovasz_loss" or name == "lovasz":
             return LovaszHingeLoss()
         elif name == "weighted_binary_cross_entropy":
             pos_weight = torch.tensor(data["pos_weights"]).reshape(nc, 1, 1).to(device)

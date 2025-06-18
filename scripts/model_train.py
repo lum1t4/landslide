@@ -1,9 +1,11 @@
 import argparse
+from dataclasses import dataclass, field
 from datetime import datetime
 import gc
 import io
 import logging
 from pathlib import Path
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -16,7 +18,12 @@ from landslide.dtypes import IterableSimpleNamespace
 from landslide.losses import AutoCriterion
 from landslide.metrics import BinaryConfusionMatrix
 from landslide.model import init_model
-from landslide.torch_utils import device_memory_clear, device_memory_used, init_seeds
+from landslide.torch_utils import (
+    device_memory_clear,
+    device_memory_used,
+    init_seeds,
+    intersect_dicts,
+)
 from landslide.trackers import _WANDB_AVAILABLE, Tracker, WandbTracker
 
 # Configure logger
@@ -24,20 +31,12 @@ logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO)
 
 
-def intersect_dicts(da, db, exclude=()):
-    """Returns a dictionary of intersecting keys with matching shapes, excluding 'exclude' keys, using da values."""
-    return {
-        k: v
-        for k, v in da.items()
-        if k in db and all(x not in k for x in exclude) and v.shape == db[k].shape
-    }
-
 
 def load_model(model: nn.Module, weights: Path, verbose: bool = True) -> nn.Module:
     from safetensors.torch import load_file
 
     checkpoint = (
-        torch.load(weights, map_location="cpu")
+        torch.load(weights, map_location="cpu", weights_only=False)
         if not weights.name.endswith(".safetensors")
         else load_file(weights, device="cpu")
     )
@@ -157,6 +156,113 @@ def auto_naming(hyp):
     return hyp
 
 
+
+@torch.inference_mode()
+def model_test(
+    hyp: IterableSimpleNamespace,
+    data: dict,
+    device: torch.device,
+    weights_dir: Path,
+    tracker: Tracker = Tracker,
+):  
+    if not (_WANDB_AVAILABLE and hyp.tracker == "wandb"):
+        return
+    import wandb
+    test_set = LandslideDataset(
+        data[hyp.test],
+        image_sz=hyp.image_sz,
+        mask_sz=hyp.mask_sz,
+        do_normalize=hyp.normalize,
+        mean=data["mean"],
+        std=data["std"],
+    )
+    test_loader = dataloader(test_set, hyp.batch, hyp.workers, False, mode="valid")
+    last, best = weights_dir / "last.pth", weights_dir / "best.pth"
+
+    metrics = {}
+    for model_path in [last, best]:
+        confmat = BinaryConfusionMatrix()
+        model = init_model(hyp.model, data, hyp)
+        model = load_model(model, model_path, verbose=True)
+        model.eval()
+        table = wandb.Table(columns=["Image", "Ground Truth", "Prediction"])
+        mean = torch.tensor(data["mean"]).view(3, 1, 1)
+        std = torch.tensor(data["std"]).view(3, 1, 1)
+        
+        for imgs, targets in test_loader:
+            imgs = imgs.to(device, non_blocking=True)
+            preds = model(imgs)
+            preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
+            preds = postprocess_predictions(preds, conf=hyp.conf)
+            preds = preds.long().cpu()
+            imgs = imgs.cpu()
+            confmat(preds, targets)
+                
+            if hyp.normalize:
+                imgs = (imgs * std + mean) * 255
+            imgs = imgs.to(torch.uint8)
+
+            for img, target, pred in zip(imgs, targets, preds):
+                gt_mask = target.squeeze().numpy().astype(np.uint8) * 255
+                gt_image = img.numpy().transpose(1, 2, 0).astype(np.uint8)
+                pred_mask = pred.squeeze().numpy().astype(np.uint8) * 255
+
+                table.add_data(
+                    wandb.Image(gt_image, caption="Input Image"),
+                    wandb.Image(gt_mask, caption="Ground Truth"),
+                    wandb.Image(pred_mask, caption="Prediction"),
+                )
+
+        # Log to wandb
+        metrics = {f"test/{model_path.stem}-predictions": table, **confmat.metrics(prefix=f"test/{model_path.stem}/")}
+        tracker.log(metrics)
+    tracker.finish()
+
+
+def model_checkpointing(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    epoch: int,
+    metrics: dict,
+    hyp: dict,
+    save_dir: Path,
+    best_epoch: int = 0,
+    tracker: Tracker = None,
+):
+    buffer = io.BytesIO()
+    torch.save(
+        {
+            "epoch": epoch,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "metrics": metrics,
+            "hyp": hyp,
+            "date": datetime.now().isoformat(),
+        },
+        buffer,
+    )
+    ckpt = buffer.getvalue()
+
+    # last
+    aliases = ["last"]
+    last = save_dir / "last.pth"
+    last.write_bytes(ckpt)
+
+    if epoch == best_epoch:
+        best = save_dir / "best.pth"
+        best.write_bytes(ckpt)
+        aliases.append("best")
+
+    if (hyp.save_period > 0) and (epoch % hyp.save_period == 0):
+        # save epoch, i.e. 'epoch_3.pt'
+        (save_dir / f"epoch_{epoch}.pt").write_bytes(ckpt)
+        # add alias (Currently disabled to save space)
+        # aliases.append(f"epoch_{epoch + 1}")
+
+    if tracker:
+        tracker.log_model(last, aliases=aliases)
+
+
 def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
     init_seeds(hyp.seed, deterministic=hyp.deterministic)
     hyp.pretrained = False
@@ -227,7 +333,7 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
         model = load_model(model, weights, verbose=True)
 
     if hyp.resume:
-        checkpoint = torch.load(weights, map_location="cpu")
+        checkpoint = torch.load(weights, map_location="cpu", weights_only=False)
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         start_epoch = checkpoint["epoch"] + 1
@@ -261,113 +367,10 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
         if (epoch - best_epoch) == hyp.patience:
             print(f"Early stopping at epoch {epoch + 1}")
             break
-    model_test(model, hyp, data, device, tracker)
 
+    model_test(hyp, data, device, weights_dir, tracker)
     return model
 
-
-def model_test(
-    model: nn.Module,
-    hyp: IterableSimpleNamespace,
-    data: dict,
-    device: torch.device,
-    tracker: Tracker = Tracker,
-):
-    test_set = LandslideDataset(
-        data[hyp.test],
-        image_sz=hyp.image_sz,
-        mask_sz=hyp.mask_sz,
-        do_normalize=hyp.normalize,
-        mean=data["mean"],
-        std=data["std"],
-    )
-    test_loader = dataloader(test_set, hyp.batch, hyp.workers, False, mode="valid")
-    confmat = BinaryConfusionMatrix()
-
-    # Visualize validation predictions at the end of training
-    if hyp.tracker == "wandb" and _WANDB_AVAILABLE:
-        import wandb
-
-        print("Generating validation visualizations for Wandb...")
-        model.eval()
-        table = wandb.Table(columns=["Image", "Ground Truth", "Prediction"])
-        mean = torch.tensor(data["mean"]).view(3, 1, 1)
-        std = torch.tensor(data["std"]).view(3, 1, 1)
-        
-        for imgs, targets in test_loader:
-            with torch.inference_mode():
-                imgs = imgs.to(device, non_blocking=True)
-                preds = model(imgs)
-                preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
-                preds = postprocess_predictions(preds, conf=hyp.conf)
-                preds = preds.long().cpu()
-                imgs = imgs.cpu()
-                confmat(preds, targets)
-                
-            if hyp.normalize:
-                imgs = (imgs * std + mean) * 255
-            imgs = imgs.to(torch.uint8)
-
-            for img, target, pred in zip(imgs, targets, preds):
-                gt_mask = target.squeeze().numpy().astype(np.uint8) * 255
-                gt_image = img.numpy().transpose(1, 2, 0).astype(np.uint8)
-                pred_mask = pred.squeeze().numpy().astype(np.uint8) * 255
-
-                table.add_data(
-                    wandb.Image(gt_image, caption="Input Image"),
-                    wandb.Image(gt_mask, caption="Ground Truth"),
-                    wandb.Image(pred_mask, caption="Prediction"),
-                )
-
-        # Log to wandb
-        metrics = {"test/predictions": table, **confmat.metrics(prefix="test/")}
-        tracker.log(metrics)
-        tracker.finish()
-        print("Validation visualizations complete")
-
-
-def model_checkpointing(
-    model: nn.Module,
-    optimizer: torch.optim.Optimizer,
-    epoch: int,
-    metrics: dict,
-    hyp: dict,
-    save_dir: Path,
-    best_epoch: int = 0,
-    tracker: Tracker = None,
-):
-    buffer = io.BytesIO()
-    torch.save(
-        {
-            "epoch": epoch,
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "metrics": metrics,
-            "hyp": hyp,
-            "date": datetime.now().isoformat(),
-        },
-        buffer,
-    )
-    ckpt = buffer.getvalue()
-
-    # last
-    aliases = ["last"]
-    last = save_dir / "last.pth"
-    last.write_bytes(ckpt)
-
-    if epoch == best_epoch:
-        best = save_dir / "best.pth"
-        best.write_bytes(ckpt)
-        aliases.append("best")
-
-    if (hyp.save_period > 0) and (epoch % hyp.save_period == 0):
-        # save epoch, i.e. 'epoch_3.pt'
-        (save_dir / f"epoch_{epoch}.pt").write_bytes(ckpt)
-        # add alias (Currently disabled to save space)
-        # aliases.append(f"epoch_{epoch + 1}")
-
-    if tracker:
-        tracker.log_model(last, aliases=aliases)
 
 
 if __name__ == "__main__":
