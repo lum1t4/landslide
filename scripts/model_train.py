@@ -287,8 +287,8 @@ def train(hyp: IterableSimpleNamespace, tracker: Tracker = Tracker):
 
     if hyp.tracker == "wandb":
         tracker = WandbTracker(project=hyp.project, name=hyp.name, config=vars(hyp))
-        tracker.run.define_metric("valid/F1-score", summary="max")
-        tracker.run.define_metric("test/F1-score", summary="max")
+        tracker.run.define_metric("valid/F1-Score", summary="max")
+        tracker.run.define_metric("test/best/F1-score", summary="max")
     else:
         tracker = Tracker(hyp)
     nc = data.get("nc", 1)
