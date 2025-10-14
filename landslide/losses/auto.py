@@ -10,10 +10,10 @@ from .lovasz import LovaszHingeLoss
 
 
 class AutoCriterion(nn.Module):
-    def __init__(self, name: str, model: nn.Module, hyp, data, device):
+    def __init__(self, name: str, data: dict = {}):
         super().__init__()
 
-        names, weights, instances = self.parse_criterion(name, model, hyp, data, device)
+        names, weights, instances = self.parse_criterion(name, data=data)
         self.losses = nn.ModuleList(instances)
         self.weights = weights
         self.names = names
@@ -21,7 +21,7 @@ class AutoCriterion(nn.Module):
     def __len__(self):
         return len(self.losses)
 
-    def parse_criterion(self, criterion: str, model, hyp, data, device) -> nn.Module:
+    def parse_criterion(self, criterion: str, data: dict) -> nn.Module:
         entries = criterion.split("+")
         names = []
         weights = []
@@ -29,7 +29,7 @@ class AutoCriterion(nn.Module):
 
         for entry in entries:
             weight, name = self.parse_entry(entry)
-            loss_fn = self.parse_instance(name, model, hyp, data, device)
+            loss_fn = self.parse_instance(name, data)
 
             names.append(name)
             functions.append(loss_fn)
@@ -57,16 +57,18 @@ class AutoCriterion(nn.Module):
         weight = float(weight_str) if weight_str is not None else 1.0
         return weight, name
 
-    def parse_instance(self, name: str, model, hyp, data, device) -> nn.Module:
-        nc = data.get("nc", 1)
+    def parse_instance(self, name: str, data: dict = {}) -> nn.Module:
         if name == "binary_cross_entropy" or name == "bce":
             return nn.BCEWithLogitsLoss()
         elif name == "focal_loss":
-            return BinaryFocalLossWithLogits(alpha=0.75, gamma=2.0)
+            alpha = data.get('alpha', 0.75)
+            gamma = data.get('gamma', 2.0)
+            return BinaryFocalLossWithLogits(alpha, gamma)
         elif name == "lovasz_hinge_loss" or name == "lovasz_loss" or name == "lovasz":
             return LovaszHingeLoss()
         elif name == "weighted_binary_cross_entropy" or name == "wbce":
-            pos_weight = torch.tensor(data["pos_weights"]).reshape(nc, 1, 1).to(device)
+            nc = data.get("nc", 1)
+            pos_weight = torch.tensor(data["pos_weights"]).reshape(nc, 1, 1)
             return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         elif name == "dice_loss" or name == "dice":
             return BinaryDiceLoss()
@@ -75,9 +77,10 @@ class AutoCriterion(nn.Module):
             return nn.BCEWithLogitsLoss()
 
     def forward(self, preds, targets):
-        losses = torch.zeros(len(self.names), device=preds.device)
-        aggr_loss = torch.zeros(1, device=preds.device)
-
+        device = preds.device
+        self.to(device)
+        losses = torch.zeros(len(self.names), device=device)
+        aggr_loss = torch.zeros(1, device=device)
         losses = torch.stack([w * fn(preds, targets) for w, fn in zip(self.weights, self.losses)])
         aggr_loss = losses.sum()
         return aggr_loss, losses

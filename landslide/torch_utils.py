@@ -1,16 +1,17 @@
-from functools import wraps
 import gc
 import logging
 import os
 import random
-from typing import Callable, Optional
+from functools import wraps
+from typing import Callable, Literal, Optional
 
 import numpy as np
 import torch
-from torch import Tensor
 import torch.distributed as dist
 import torch.nn as nn
-from torch.utils.data import Sampler
+from torch import Tensor
+from torch.utils.data import DataLoader, Dataset, Sampler
+from torch.utils.data.distributed import DistributedSampler
 from typing_extensions import ParamSpec, TypeGuard, TypeVar
 
 T = TypeVar("T")
@@ -451,3 +452,36 @@ def rank_zero_only(fn: Callable[P, T], default: Optional[T] = None) -> Callable[
             return default
 
         return wrapped_fn
+
+
+def dataloader(
+    dataset: Dataset,
+    batch_size: int = 16,
+    workers: int = 8,
+    shuffle: bool = True,
+    rank: int | None = None,
+    pin_memory: bool = True,
+    collate_fn: Optional[Callable] = None,
+    mode: Literal["train", "valid", "test"] = "train",
+) -> DataLoader:
+    bs = min(batch_size, len(dataset))
+    nd = torch.cuda.device_count()  # number of CUDA devices
+    nw = min([os.cpu_count() // max(nd, 1), bs if bs > 1 and nd > 0 else 0, workers])  # number of workers
+    shuffle = shuffle and mode == "train"
+    rank = RANK if rank is None else rank # if not specified
+    sampler = DistributedSampler if mode == "train" else DistributedEvalSampler
+    sampler = None if rank == -1 else sampler(dataset, shuffle=shuffle)
+    collate_fn = collate_fn if collate_fn is not None else dataset.collate_fn if hasattr(dataset, "collate_fn") else None
+    generator = torch.Generator()
+    generator.manual_seed(6148914691236517205 + RANK)
+    return DataLoader(
+        dataset,
+        batch_size=bs,
+        shuffle=shuffle,
+        sampler=sampler,
+        num_workers=nw,
+        pin_memory=pin_memory if not torch.backends.mps.is_available() else False, # MPS does not support pin_memory
+        collate_fn=collate_fn,
+        worker_init_fn=seed_worker,
+        generator=generator,
+    )

@@ -24,3 +24,21 @@ python scripts/model_train.py --model "unet" --image_sz 128 --criterion "binary_
 ```
 
 Adjust the parameters as needed and in particular device according to available accelerators (currently tested only on cuda and mps)
+
+
+
+Metric
+- Visual harness on complete reconstructed image
+- F1 score pixel wise
+- F1 score patch-wise
+- AUC-ROC curve (not threshold optimization) to check is doing better than random
+
+Investigation
+- How different losses behave?
+  First is to train a model maybe unet - 22 * "bce", "focal_loss", "bce+dice", "bce+lovasz"
+
+- How differnt augmentation behave?
+  Random Masking, RandomFlipping, Mosaic, Mixup, etc.
+
+- How does scaling goes with segformer and unet? (segformer b1, b2, unet 512, resnet unet)
+

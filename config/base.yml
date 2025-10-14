@@ -1,0 +1,28 @@
+params:
+  model: "unet"
+  project: "landslide"
+  name: "test"
+  dataset_content: 'data/raw/land-anomalies'
+  dataset_index: 'data/interim/csv_split/A19_5cm' 
+  weights:
+  resume: false
+  epochs: 2
+  lr: 0.001
+  batch_size: 32
+  weight_decay: 0.0005
+  seed: 1337
+  deterministic: false
+  criterion: "bce+dice"
+  image_sz: 128
+  mask_sz: 128
+  normalize: true
+  monitor: 'valid/F1-Score'
+  patience: 40
+  mode: 'max'
+  conf: 0.5
+  workers: 8
+  device: 'mps'
+  save_dir: 'runs'
+  save_period: -1
+  tracker: "wandb"
+  val: 'val' # dataset validation fold as named in file system
