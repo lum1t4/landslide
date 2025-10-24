@@ -1,8 +1,8 @@
 import glob
 import os
-import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Self, Union
+from typing import Dict, List, Literal, Optional, Self, Union
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms.v2 import functional as F
 
-from landslide.torch_utils import dataloader
+from landslide.utils import ROOT, yaml_load
 
 IMG_FORMATS = ["bmp", "jpg", "jpeg", "png", "tif", "tiff", "dng", "webp", "mpo"]
 
@@ -130,11 +130,11 @@ def postprocess(masks, targets, conf: float = 0.5):
         masks = torch.argmax(masks, dim=1)
     return masks.to(torch.uint8)
 
+
 class LandslideDataset(Dataset):
     def __init__(
         self,
-        index_path: str | Path,
-        dataset_path: str | Path,
+        path: str | Path,
         image_sz: int = 128,
         mask_sz: int = 128,
         do_resize: bool = True,
@@ -143,9 +143,8 @@ class LandslideDataset(Dataset):
         do_rescale: bool = True,
         mean: list[float] = [0.485, 0.456, 0.406],
         std: list[float] = [0.229, 0.224, 0.225],
-        split: str = "train"
+        split: Literal['train', 'valid', 'test'] = "train"
     ):
-        
         self.image_sz = image_sz
         self.mask_sz = mask_sz
         self.normalize = do_normalize
@@ -156,17 +155,15 @@ class LandslideDataset(Dataset):
         self.rescale = do_rescale
         self.split = split
 
-        dataset_path = Path(dataset_path)
-        index_path = Path(index_path)  / f'{self.split}.csv'
+        self.data = yaml_load(path)
+        self.root = Path(self.data['root'])
+        self.root = self.root if self.root.is_absolute() else ROOT / self.root
 
-        assert dataset_path.exists(), f"Dataset location could not be found at {dataset_path}"
-        assert index_path.exists(), f"Index location could not be found at {index_path}"
+        assert self.root.exists(), f"Dataset location could not be found at {self.root}"
+        assert Path(path).exists(), f"Index location could not be found at {path}"
 
-        df = pd.read_csv(index_path, names=["image"])
-        images = map(lambda x: x.replace("/", os.sep), df["image"])
-        images = map(lambda x: dataset_path.joinpath(x), images)
-        images = filter(lambda x: x.exists(), images)
-        self.images = list(images)
+
+        self.images = list(map(lambda x: self.root / x, self.data[self.split]))
 
     def __len__(self):
         return len(self.images)
@@ -217,59 +214,3 @@ class LandslideDataset(Dataset):
             "image_path": image_paths,
             "mask_path": mask_paths,
         }
-    
-    def compute_stats(self) -> Self:
-        if self.split != "train":
-            warnings.warn("You should not use any fold beside train to compute dataset stats")
-
-        # Deactivate normalization and reinstate it later
-        current = self.normalize
-        self.normalize = False
-        loader = dataloader(self, batch_size=12, mode="valid")
-        item = self.__getitem__(0)
-        img, mask = item['input'], item['target']
-
-        num_chs = img.shape[0]
-        num_cls = 1 if mask.ndim == 2 else mask.shape[0]  # noqa: F841
-
-        ch_sum = torch.zeros(num_chs)
-        ch_sqr = torch.zeros(num_chs)
-
-        pixel_count = 0 # How many RGB pixels
-        patch_count = 0 # How many images (should be equal to len(dataset))
-
-        pixel_positive = 0 # How many pixel are positive
-         # How many patches are positive (have at least one positive pixel) 
-        patch_positive = 0
-
-        for batch in loader:
-            images = batch['input']
-            masks = batch['target']
-            B, _, H, W = images.shape
-            ch_sum += images.sum(dim=[0, 2, 3])
-            ch_sqr += (images ** 2).sum(dim=[0, 2, 3])
-            pixel_count += B * H * W
-            patch_count += B
-            for mask in masks:
-                positive = (mask == 1).sum().item()
-                if positive > 0:
-                    patch_positive += 1
-                    pixel_positive += positive
-
-
-        mean = ch_sum / pixel_count
-        std = torch.sqrt((ch_sqr / pixel_count) - mean ** 2)
-        patch_weight = (patch_count - patch_positive) / patch_count
-        pixel_weight = (pixel_count - pixel_positive) / pixel_count
-
-        self.mean = mean.tolist()
-        self.std = std.tolist()
-        self.pixel_count = pixel_count
-        self.pixel_positive = pixel_positive
-        self.pixel_weight = pixel_weight
-        self.patch_count = patch_count
-        self.patch_positive = patch_positive
-        self.patch_weight = patch_weight
-        self.normalize = current
-        print("Computed stats")
-        return self

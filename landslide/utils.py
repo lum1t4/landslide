@@ -7,8 +7,7 @@ from typing import Optional
 
 import yaml
 
-ROOT = Path(__file__).parent
-DATA_ROOT = ROOT.parent / "data"
+ROOT = Path(__file__).parents[1]
 
 
 def yaml_save(file: str = "data.yaml", data: Optional[dict] = None, header: str = ""):

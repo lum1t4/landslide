@@ -2,27 +2,26 @@ params:
   model: "unet"
   project: "landslide"
   name: "test"
-  dataset_content: 'data/raw/land-anomalies'
-  dataset_index: 'data/interim/csv_split/A19_5cm' 
+  dataset: 'data/processed/csv_split/Bella_5cm.yml'
   weights:
   resume: false
-  epochs: 2
-  lr: 0.001
+  epochs: 100
+  lr: 0.0003
   batch_size: 32
   weight_decay: 0.0005
   seed: 1337
   deterministic: false
-  criterion: "bce+dice"
-  image_sz: 128
-  mask_sz: 128
+  criterion: "bce"
+  image_sz: 512
+  mask_sz: 512
   normalize: true
-  monitor: 'valid/F1-Score'
-  patience: 40
-  mode: 'max'
+  monitor: 'valid/loss'
+  patience: 20
+  mode: 'min'
   conf: 0.5
-  workers: 8
-  device: 'mps'
+  workers: 1
+  device: 'cpu'
   save_dir: 'runs'
   save_period: -1
-  tracker: "wandb"
-  val: 'val' # dataset validation fold as named in file system
+  tracker: none
+  val: 'test' # dataset validation fold as named in file system
