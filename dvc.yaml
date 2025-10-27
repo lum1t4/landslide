@@ -1,7 +1,7 @@
 stages:
   land-anomalies:
     cmd:
-      - curl -o data/raw/land-anomalies.zip https://landslide-big-data-2425.s3.eu-central-1.amazonaws.com/land-anomalies.zip
+      - curl -L -o data/raw/land-anomalies.zip https://landslide-big-data-2425.s3.eu-central-1.amazonaws.com/land-anomalies.zip
       - unzip -o data/raw/land-anomalies.zip -d data/raw
       - rm data/raw/land-anomalies.zip
     outs:

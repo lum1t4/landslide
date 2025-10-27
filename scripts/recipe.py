@@ -219,6 +219,7 @@ def schedule_train_epoch(ctx: TrainContext):
         preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
         aggr_loss, losses = criterion(preds, targets)
         aggr_loss.backward()
+        norm = torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), max_norm=10.0)
         optimizer.step()
         optimizer.zero_grad()
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
@@ -238,13 +239,13 @@ def schedule_train_epoch(ctx: TrainContext):
         )
 
     ctx.metrics = {f"train/{name}": cl.item() for name, cl in zip(criterion.names, mean_losses)}
+    ctx.metrics['train/norm'] = norm
     ctx.metrics["train/loss"] = running_loss
     return ctx
 
 
 @torch.inference_mode()
 def schedule_valid_epoch(ctx: TrainContext):
-    criterion = nn.BCEWithLogitsLoss()
     device = ctx.device
     loader = ctx.valid_loader
     model = ctx.model
@@ -324,7 +325,18 @@ def schedule_valid_epoch(ctx: TrainContext):
         "valid/Accuracy (patch)": patch_accuracy,
         "valid/F1 (patch)": patch_f1,
     }
-    print(metrics)
+
+    pixel_total = pixel_TP + pixel_TN + pixel_FP + pixel_FN
+    metrics['valid/TP'] = pixel_TP / pixel_total
+    metrics['valid/TN'] = pixel_TN / pixel_total
+    metrics['valid/FP'] = pixel_FP / pixel_total
+    metrics['valid/FN'] = pixel_FN / pixel_total
+
+    patch_total = patch_TP + patch_TN + patch_FP + patch_FN
+    metrics['valid/TP (patch)'] = patch_TP / patch_total
+    metrics['valid/TN (patch)'] = patch_TN / patch_total
+    metrics['valid/FP (patch)'] = patch_FP / patch_total
+    metrics['valid/FN (patch)'] = patch_FN / patch_total
     ctx.metrics.update(metrics)
     return ctx
 
@@ -478,8 +490,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, choices=["unet", "segformer"], help="Name of the model architecture to use (e.g., 'unet', 'fcn').")
     parser.add_argument("--project", type=str, help="Project name for tracking and logging.")
     parser.add_argument("--name", type=str, help="Name of the training run.")
-    parser.add_argument("--dataset_content", type=str, help="Identifier or path for the dataset content.")
-    parser.add_argument("--dataset_index", type=str, help="Identifier or path for the dataset index.")
+    parser.add_argument("--dataset", type=str, help="Identifier or path for the dataset index.")
     parser.add_argument("--weights", type=str, help="Path to pretrained model weights to initialize training.")
     parser.add_argument("--resume", action=argparse.BooleanOptionalAction, help="Whether to resume training from existing weights checkpoint.")
 
