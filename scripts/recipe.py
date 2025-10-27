@@ -182,7 +182,9 @@ def schedule_setup_logging(ctx: TrainContext):
         ctx.tracker.run.define_metric(ctx.config.monitor, summary=ctx.config.mode)
         ctx.tracker.run.define_metric("train/loss", summary="min")
         ctx.tracker.run.define_metric("valid/F1 (pixel)", summary="max")
-        ctx.tracker.run.define_metric("valid/F1 (patch)", summary="max")        
+        ctx.tracker.run.define_metric("valid/F1 (patch)", summary="max")    
+        import wandb
+        ctx.wb_table = wandb.Table(columns=["Image", "Epoch"])    
     return ctx
 
 
@@ -418,9 +420,27 @@ def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
         so = preds[sample_idx].squeeze().numpy().astype(np.uint8) * 255
         Image.fromarray(so).save(pred_masks / name)
         
-    if not exists_images: merge_patches(images).save(ctx.plt_dir / 'image.png')
+    if not exists_images:
+        merge_patches(images).save(ctx.plt_dir / 'image.png')
+
     if not exists_masks: merge_patches(gt_masks).save(ctx.plt_dir / 'gt_mask.png')
     merge_patches(pred_masks).save(pred_masks.parent / 'mask.png')
+
+    if ctx.config.tracker == "wandb":
+        import wandb
+        ctx.wb_table.add_data(wandb.Image(
+            Image.open(ctx.plt_dir / 'image.png').convert('RGB'),
+            masks={
+                "ground_truth": {
+                    "mask_data": np.array(Image.open(ctx.plt_dir / 'gt_mask.png').convert('L')) / 255.0,
+                    "class_labels": {0: "background", 1: "landslide"}
+                },
+                "prediction": {
+                    "mask_data": np.array(Image.open(pred_masks.parent / 'mask.png').convert('L')) / 255.0,
+                    "class_labels": {0: "background", 1: "landslide"}
+                }
+            }
+        ), ctx.current_iteration)
 
 
 def schedule_early_stopping(ctx: TrainContext):
@@ -468,7 +488,7 @@ def schedule_train(config: TrainConfig):
     ctx.model = ctx.model.to(ctx.device)
 
     for _ in ctx:
-        ctx = schedule_train_epoch(ctx)
+        # ctx = schedule_train_epoch(ctx)
         ctx = schedule_valid_epoch(ctx)
         ctx.tracker.log(ctx.metrics, step=ctx.current_iteration)
         ctx = schedule_early_stopping(ctx)
@@ -477,6 +497,11 @@ def schedule_train(config: TrainConfig):
         device_memory_clear(ctx.device)
         if ctx.stop:
             break
+
+    # Log wandb table at the end of training
+    if ctx.config.tracker == "wandb":
+        ctx.tracker.log({"valid/predictions": ctx.wb_table})
+
     # schedule_final_validation(ctx)
 
 
