@@ -13,7 +13,7 @@ class AutoCriterion(nn.Module):
     def __init__(self, name: str, data: dict = {}):
         super().__init__()
 
-        names, weights, instances = self.parse_criterion(name, data=data)
+        names, weights, instances = self.parse_criterion(name, data)
         self.losses = nn.ModuleList(instances)
         self.weights = weights
         self.names = names
@@ -68,7 +68,7 @@ class AutoCriterion(nn.Module):
             return LovaszHingeLoss()
         elif name == "weighted_binary_cross_entropy" or name == "wbce":
             nc = data.get("nc", 1)
-            pos_weight = torch.tensor(data["pos_weights"]).reshape(nc, 1, 1)
+            pos_weight = torch.tensor(data["pos_weight"]).reshape(nc, 1, 1)
             return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         elif name == "dice_loss" or name == "dice":
             return BinaryDiceLoss()
