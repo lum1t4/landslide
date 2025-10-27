@@ -488,7 +488,7 @@ def schedule_train(config: TrainConfig):
     ctx.model = ctx.model.to(ctx.device)
 
     for _ in ctx:
-        # ctx = schedule_train_epoch(ctx)
+        ctx = schedule_train_epoch(ctx)
         ctx = schedule_valid_epoch(ctx)
         ctx.tracker.log(ctx.metrics, step=ctx.current_iteration)
         ctx = schedule_early_stopping(ctx)
