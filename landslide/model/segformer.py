@@ -5,10 +5,10 @@ Reference:
  - https://github.com/FrancescoSaverioZuppichini/SegFormer
 """
 
-from dataclasses import dataclass
 import math
 from typing import List, Optional
 
+from pydantic import BaseModel, Field
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,29 +17,29 @@ import torch.nn.functional as F
 # ----------------------------
 # Configuration
 # ----------------------------
-@dataclass
-class SegformerConfig:
-    num_channels = 3
-    num_encoder_blocks = 4
-    dephts = [2, 2, 2, 2]
-    hidden_sizes = [32, 64, 160, 256]
-    patch_sizes = [7, 3, 3, 3]
-    strides = [4, 2, 2, 2]
-    num_attention_heads = [1, 2, 5, 8]
-    mlp_ratios = [4, 4, 4, 4]
-    hidden_act = "gelu"
-    hidden_dropout_prob = 0.0
-    attention_probs_dropout_prob = 0.0
-    classifier_dropout_prob = 0.1
-    classifier_dropout_prob = 0.1
-    initializer_range = 0.02
-    drop_path_rate = 0.1
-    layer_norm_eps = 1e-6
-    decoder_hidden_size = 256
+class SegformerConfig(BaseModel):
+    num_channels: int = 3
+    num_encoder_blocks: int = 4
+    hidden_sizes: List[int] = Field(default=[32, 64, 160, 256])
+    patch_sizes: List[int] = Field(default=[7, 3, 3, 3])
+    strides: List[int] = Field(default=[4, 2, 2, 2])
+    num_attention_heads: List[int] = Field(default=[1, 2, 5, 8])
+    mlp_ratios: List[int] = Field(default=[4, 4, 4, 4])
+    hidden_act: str = "gelu"
+    hidden_dropout_prob: float = 0.0
+    attention_probs_dropout_prob: float = 0.0
+    classifier_dropout_prob: float = 0.1
+    initializer_range: float = 0.02
+    drop_path_rate: float = 0.1
+    layer_norm_eps: float = 1e-6
+    decoder_hidden_size: int = 256
     reshape_last_stage: Optional[bool] = True
-    sr_ratios = [8, 4, 2, 1]
-    depths = [2, 2, 2, 2]
-    num_labels = 1
+    sr_ratios: List[int] = Field(default=[8, 4, 2, 1])
+    depths: List[int] = Field(default=[2, 2, 2, 2])
+    num_labels: int = 1
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 # ----------------------------

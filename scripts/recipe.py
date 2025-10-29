@@ -18,6 +18,7 @@ import tqdm
 
 from landslide.data import LandslideDataset, get_images
 from landslide.losses import AutoCriterion
+from landslide.model.registry import load_model
 from landslide.torch_utils import (
     dataloader,
     device_memory_clear,
@@ -137,38 +138,18 @@ def schedule_dataloaders(ctx: TrainContext):
     return ctx
 
 
-def schedule_load_model(ctx: TrainContext):
-    assert ctx.train_loader is not None
-    from landslide.model.segformer import SegformerConfig, SegformerForSemanticSegmentation
-    from landslide.model.unet import UNet
-
-    if ctx.config.model == "unet":
-        ctx.model = UNet(nc=1, ch=3)
-    elif ctx.config.model == "segformer":
-        model_config = SegformerConfig()
-        model_config.num_labels = 1
-        model_config.num_channels = 3
-        ctx.model = SegformerForSemanticSegmentation(model_config)
-    return ctx
-
-
 def schedule_resume_model(ctx: TrainContext):
+    # TODO: check after load_model refactor
     weights = ctx.config.weights
     if weights is None or not weights.exists():
         return ctx
 
     ctx.config.pretrained = True # For logging porposes
-    if weights.name.endswith(".safetensors"):
-        from safetensors.torch import load_file
-        checkpoint = load_file(weights, device="cpu")
-    else:
-        checkpoint = torch.load(weights, map_location="cpu", weights_only=False)
-
+    checkpoint = torch.load(weights, map_location="cpu", weights_only=False)
     msd = checkpoint["model"] if "model" in checkpoint else checkpoint
     csd = intersect_dicts(msd, ctx.model.state_dict())  # intersect
     ctx.model.load_state_dict(csd, strict=False)  # load
     print(f"Transferred {len(csd)}/{len(ctx.model.state_dict())} items from pretrained weights")
-
     if ctx.config.resume and ctx.config.pretrained:
         ctx.optimizer.load_state_dict(checkpoint["optimizer"])
         ctx.start_iteration = checkpoint["epoch"] + 1
@@ -221,7 +202,7 @@ def schedule_train_epoch(ctx: TrainContext):
         preds = F.interpolate(preds, size=targets.shape[-2:], mode="bilinear", align_corners=False)
         aggr_loss, losses = criterion(preds, targets)
         aggr_loss.backward()
-        norm = torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), max_norm=10.0)
+        norm = torch.nn.utils.clip_grad_norm_(ctx.model.parameters(), max_norm=1.0)
         optimizer.step()
         optimizer.zero_grad()
         running_loss = (running_loss * i + aggr_loss.item()) / (i + 1)
@@ -394,53 +375,78 @@ def merge_patches(path: Path, patch_size: int = 512) -> Image.Image:
 
 
 def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
-    # Plots
-    inputs = batch["input"]
-    targets = batch["target"]
-    pred_masks = ctx.plt_dir / f"epoch_{ctx.current_iteration}" / "patches"
-    images = ctx.plt_dir / 'images'
-    gt_masks = ctx.plt_dir / 'gt_masks'
-    exists_images = images.exists()
-    exists_masks = gt_masks.exists()
-    if not exists_images:
-        images.mkdir()
-    if not exists_masks:
-        gt_masks.mkdir()
-    pred_masks.mkdir(exist_ok=True, parents=True)
+    # Tmp patches dirs
+    p_dst = ctx.plt_dir / f"epoch_{ctx.current_iteration}" / "patches"
+    i_dst = ctx.plt_dir / 'image' / 'patches'
+    t_dst = ctx.plt_dir / 'mask' / 'patches'
 
-    for sample_idx in range(inputs.size(0)):
+    # Reconstructed images
+    p_img = p_dst.parent / 'pred.png'
+    i_img = i_dst.parent / 'image.png'
+    t_img = t_dst.parent / 'mask.png'
+
+    data = {
+        'img': {'dst': ctx.plt_dir / f"epoch_{ctx.current_iteration}" / "patches", 'name': 'image'},
+        'mask': {'dst': ctx.plt_dir / 'image' / 'patches', 'name': 'mask'},
+        'pred': {'dst': ctx.plt_dir / 'mask' / 'patches', 'name': 'pred'},
+    }
+
+    for k, v in data.items():
+        v['dst'].mkdir(exist_ok=True, parents=True)
+        data[k]['image'] = v['dst'].parent / f"{v['name']}.png"
+
+    for k, v in data.items():
+        if not v['image'].exists():
+            reconstruced = merge_patches(v['dst'])
+            reconstruced.save(data[k]['image'])
+            data[k]['image'] = reconstruced
+            v['dst'].unlink()
+
+
+    p_dst.mkdir(exist_ok=True, parents=True)
+    i_dst.mkdir(exist_ok=True, parents=True)
+    t_dst.mkdir(exist_ok=True, parents=True)
+    
+    for sample_idx in range(batch["input"].size(0)):
         name = batch["image_path"][sample_idx].name
-        if not exists_images:
-            si = inputs[sample_idx] * 255
+        if not i_img.exists():
+            si = batch["input"][sample_idx] * 255
             si = si.numpy().transpose(1, 2, 0).astype(np.uint8)
-            Image.fromarray(si).save(images / name)
-        if not exists_masks:
-            st = targets[sample_idx].squeeze().numpy().astype(np.uint8) * 255
-            Image.fromarray(st).save(gt_masks / name)
-        so = preds[sample_idx].squeeze().numpy().astype(np.uint8) * 255
-        Image.fromarray(so).save(pred_masks / name)
-        
-    if not exists_images:
-        merge_patches(images).save(ctx.plt_dir / 'image.png')
+            Image.fromarray(si).save(i_dst / name)
 
-    if not exists_masks: merge_patches(gt_masks).save(ctx.plt_dir / 'gt_mask.png')
-    merge_patches(pred_masks).save(pred_masks.parent / 'mask.png')
+        if not t_img.exists():
+            st = batch["target"][sample_idx].squeeze().numpy().astype(np.uint8) * 255
+            Image.fromarray(st).save(t_dst / name)
+
+        if not p_img.exists():
+            so = preds[sample_idx].squeeze().numpy().astype(np.uint8) * 255
+            Image.fromarray(so).save(p_dst / name)
+
+    for dst, img in zip([p_dst, i_dst, t_dst], [p_img, i_img, t_img]):
+        if not img.exists():
+            # Reconstruct from patches
+            merge_patches(dst).save(img)
+            # Clean up to free some space
+            dst.unlink()
+
 
     if ctx.config.tracker == "wandb":
         import wandb
         ctx.wb_table.add_data(wandb.Image(
-            Image.open(ctx.plt_dir / 'image.png').convert('RGB'),
+            Image.open(i_img).convert('RGB'),
             masks={
                 "ground_truth": {
-                    "mask_data": np.array(Image.open(ctx.plt_dir / 'gt_mask.png').convert('L')) / 255.0,
+                    "mask_data": np.array(Image.open(t_img).convert('L')) / 255.0,
                     "class_labels": {0: "background", 1: "landslide"}
                 },
                 "prediction": {
-                    "mask_data": np.array(Image.open(pred_masks.parent / 'mask.png').convert('L')) / 255.0,
+                    "mask_data": np.array(Image.open(p_img).convert('L')) / 255.0,
                     "class_labels": {0: "background", 1: "landslide"}
                 }
             }
         ), ctx.current_iteration)
+
+
 
 
 def schedule_early_stopping(ctx: TrainContext):
@@ -466,21 +472,20 @@ def schedule_model_checkpointing(ctx: TrainContext):
         "date": datetime.now().isoformat(),
     }, buffer)
     ckpt = buffer.getvalue()
-    aliases = ["last"]
-    ctx.last_checkpoint.write_bytes(ckpt)
+    # ctx.last_checkpoint.write_bytes(ckpt)
     if ctx.current_iteration == ctx.best_iteration:
         ctx.best_checkpoint.write_bytes(ckpt)
-        aliases.append("best")
+        ctx.tracker.log_model(ctx.best_checkpoint, aliases=["best"])
     if ctx.config.save_period > 0 and (ctx.current_iteration + 1) % ctx.config.save_period == 0:
         ctx.current_checkpoint.write_bytes(ckpt)
-    ctx.tracker.log_model(ctx.last_checkpoint, aliases=aliases)
+
     return ctx
 
 
 def schedule_train(config: TrainConfig):
     ctx = TrainContext(config)
     ctx = schedule_dataloaders(ctx)
-    ctx = schedule_load_model(ctx)
+    ctx.model = load_model(ctx.model)
     ctx.criterion = AutoCriterion(ctx.config.criterion, {"nc": 1, "pos_weight": ctx.train_loader.dataset.data['patch_weight']})
     ctx.optimizer = torch.optim.AdamW(ctx.model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
     ctx = schedule_resume_model(ctx)

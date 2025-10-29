@@ -1,6 +1,13 @@
+from pydantic import BaseModel
 import torch
 from torch import nn
 import torch.nn.functional as F
+
+
+class UNetConfig(BaseModel):
+    num_labels: int = 2  # number of output classes
+    num_channels: int = 14  # number of input channels
+    bilinear: bool = True  # whether to use bilinear upsampling
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels, mid_channels=None):
@@ -60,23 +67,23 @@ class OutConv(nn.Module):
         return self.conv(x)
 
 class UNet(nn.Module):
-    def __init__(self, nc: int = 2, ch: int = 14, bilinear=True):
+    def __init__(self, config: UNetConfig):
         super(UNet, self).__init__()
-        self.n_channels = ch
-        self.n_classes = nc
-        self.bilinear = bilinear
+        self.n_channels = config.num_channels
+        self.n_classes = config.num_labels
+        self.bilinear = config.bilinear
 
-        self.inc = DoubleConv(ch, 64)
+        self.inc = DoubleConv(self.n_channels, 64)
         self.down1 = Down(64, 128)
         self.down2 = Down(128, 256)
         self.down3 = Down(256, 512)
-        factor = 2 if bilinear else 1
+        factor = 2 if self.bilinear else 1
         self.down4 = Down(512, 1024 // factor)
-        self.up1 = Up(1024, 512 // factor, bilinear)
-        self.up2 = Up(512, 256 // factor, bilinear)
-        self.up3 = Up(256, 128 // factor, bilinear)
-        self.up4 = Up(128, 64, bilinear)
-        self.outc = OutConv(64, nc)
+        self.up1 = Up(1024, 512 // factor, self.bilinear)
+        self.up2 = Up(512, 256 // factor, self.bilinear)
+        self.up3 = Up(256, 128 // factor, self.bilinear)
+        self.up4 = Up(128, 64, self.bilinear)
+        self.outc = OutConv(64, self.n_classes)
 
     def forward(self, x):
         x1 = self.inc(x)
