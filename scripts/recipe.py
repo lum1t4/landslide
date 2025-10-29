@@ -375,16 +375,6 @@ def merge_patches(path: Path, patch_size: int = 512) -> Image.Image:
 
 
 def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
-    # Tmp patches dirs
-    p_dst = ctx.plt_dir / f"epoch_{ctx.current_iteration}" / "patches"
-    i_dst = ctx.plt_dir / 'image' / 'patches'
-    t_dst = ctx.plt_dir / 'mask' / 'patches'
-
-    # Reconstructed images
-    p_img = p_dst.parent / 'pred.png'
-    i_img = i_dst.parent / 'image.png'
-    t_img = t_dst.parent / 'mask.png'
-
     data = {
         'img': {'dst': ctx.plt_dir / f"epoch_{ctx.current_iteration}" / "patches", 'name': 'image'},
         'mask': {'dst': ctx.plt_dir / 'image' / 'patches', 'name': 'mask'},
@@ -395,6 +385,22 @@ def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
         v['dst'].mkdir(exist_ok=True, parents=True)
         data[k]['image'] = v['dst'].parent / f"{v['name']}.png"
 
+
+    for sample_idx in range(batch["input"].size(0)):
+        name = batch["image_path"][sample_idx].name
+        if not data['img']['image'].exists():
+            si = batch["input"][sample_idx] * 255
+            si = si.numpy().transpose(1, 2, 0).astype(np.uint8)
+            Image.fromarray(si).save(data['img']['dst'] / name)
+
+        if not data['mask']['image'].exists():
+            st = batch["target"][sample_idx].squeeze().numpy().astype(np.uint8) * 255
+            Image.fromarray(st).save(data['mask']['dst'] / name)
+
+        if not data['pred']['image'].exists():
+            so = preds[sample_idx].squeeze().numpy().astype(np.uint8) * 255
+            Image.fromarray(so).save(data['pred']['dst'] / name)
+
     for k, v in data.items():
         if not v['image'].exists():
             reconstruced = merge_patches(v['dst'])
@@ -403,44 +409,17 @@ def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
             v['dst'].rmdir()
 
 
-    p_dst.mkdir(exist_ok=True, parents=True)
-    i_dst.mkdir(exist_ok=True, parents=True)
-    t_dst.mkdir(exist_ok=True, parents=True)
-    
-    for sample_idx in range(batch["input"].size(0)):
-        name = batch["image_path"][sample_idx].name
-        if not i_img.exists():
-            si = batch["input"][sample_idx] * 255
-            si = si.numpy().transpose(1, 2, 0).astype(np.uint8)
-            Image.fromarray(si).save(i_dst / name)
-
-        if not t_img.exists():
-            st = batch["target"][sample_idx].squeeze().numpy().astype(np.uint8) * 255
-            Image.fromarray(st).save(t_dst / name)
-
-        if not p_img.exists():
-            so = preds[sample_idx].squeeze().numpy().astype(np.uint8) * 255
-            Image.fromarray(so).save(p_dst / name)
-
-    for dst, img in zip([p_dst, i_dst, t_dst], [p_img, i_img, t_img]):
-        if not img.exists():
-            # Reconstruct from patches
-            merge_patches(dst).save(img)
-            # Clean up to free some space
-            dst.unlink()
-
-
     if ctx.config.tracker == "wandb":
         import wandb
         ctx.wb_table.add_data(wandb.Image(
-            Image.open(i_img).convert('RGB'),
+            Image.open(data['img']['image']).convert('RGB'),
             masks={
                 "ground_truth": {
-                    "mask_data": np.array(Image.open(t_img).convert('L')) / 255.0,
+                    "mask_data": np.array(Image.open(data['mask']['image']).convert('L')) / 255.0,
                     "class_labels": {0: "background", 1: "landslide"}
                 },
                 "prediction": {
-                    "mask_data": np.array(Image.open(p_img).convert('L')) / 255.0,
+                    "mask_data": np.array(Image.open(data['pred']['image']).convert('L')) / 255.0,
                     "class_labels": {0: "background", 1: "landslide"}
                 }
             }
