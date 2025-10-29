@@ -406,7 +406,8 @@ def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
             reconstruced = merge_patches(v['dst'])
             reconstruced.save(data[k]['image'])
             data[k]['image'] = reconstruced
-            v['dst'].rmdir()
+            import shutil
+            shutil.rmtree(v['dst'])
 
 
     if ctx.config.tracker == "wandb":
@@ -424,8 +425,6 @@ def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
                 }
             }
         ), ctx.current_iteration)
-
-
 
 
 def schedule_early_stopping(ctx: TrainContext):
