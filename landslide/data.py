@@ -161,6 +161,7 @@ class LandslideDataset(Dataset):
 
         assert self.root.exists(), f"Dataset location could not be found at {self.root}"
         assert Path(path).exists(), f"Index location could not be found at {path}"
+        print(f"Loading {self.split} dataset from {path} with root at {self.root}")
 
 
         self.images = list(map(lambda x: self.root / x, self.data[self.split]))
