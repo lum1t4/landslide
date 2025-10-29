@@ -400,7 +400,7 @@ def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
             reconstruced = merge_patches(v['dst'])
             reconstruced.save(data[k]['image'])
             data[k]['image'] = reconstruced
-            v['dst'].unlink()
+            v['dst'].rmdir()
 
 
     p_dst.mkdir(exist_ok=True, parents=True)
