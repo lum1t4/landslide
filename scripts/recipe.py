@@ -517,7 +517,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a binary semantic segmentation model on landslide imagery.")
     parser.add_argument("--config", type=str)
     # Model and dataset
-    parser.add_argument("--model", type=str, choices=["unet", "segformer"], help="Name of the model architecture to use (e.g., 'unet', 'fcn').")
+    parser.add_argument("--model", type=str, help="Name of the model architecture to use (e.g., 'unet', 'fcn').")
     parser.add_argument("--project", type=str, help="Project name for tracking and logging.")
     parser.add_argument("--name", type=str, help="Name of the training run.")
     parser.add_argument("--dataset", type=str, help="Identifier or path for the dataset index.")

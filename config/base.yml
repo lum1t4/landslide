@@ -1,5 +1,5 @@
 params:
-  model: "unet"
+  model: "L4S/unet"
   project: "landslide"
   name: "test"
   dataset: 'data/processed/csv_split/Bella_5cm.yml'
@@ -12,8 +12,8 @@ params:
   seed: 1337
   deterministic: false
   criterion: "bce"
-  image_sz: 512
-  mask_sz: 512
+  image_sz: 128
+  mask_sz: 128
   normalize: true
   monitor: 'valid/loss'
   patience: 30
