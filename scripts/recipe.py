@@ -485,7 +485,7 @@ def schedule_model_checkpointing(ctx: TrainContext):
 def schedule_train(config: TrainConfig):
     ctx = TrainContext(config)
     ctx = schedule_dataloaders(ctx)
-    ctx.model = load_model(ctx.model)
+    ctx.model = load_model(config.model)
     ctx.criterion = AutoCriterion(ctx.config.criterion, {"nc": 1, "pos_weight": ctx.train_loader.dataset.data['patch_weight']})
     ctx.optimizer = torch.optim.AdamW(ctx.model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
     ctx = schedule_resume_model(ctx)
