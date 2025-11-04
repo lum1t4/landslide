@@ -5,6 +5,7 @@ import gc
 import io
 from pathlib import Path
 import re
+import shutil
 from typing import Any, Dict, Literal, Optional, Self
 
 import numpy as np
@@ -376,55 +377,60 @@ def merge_patches(path: Path, patch_size: int = 512) -> Image.Image:
 
 def plot_batch(ctx: TrainContext, batch: dict, preds: torch.Tensor):
     data = {
-        'img': {'dst': ctx.plt_dir / f"epoch_{ctx.current_iteration}" / "patches", 'name': 'image'},
-        'mask': {'dst': ctx.plt_dir / 'image' / 'patches', 'name': 'mask'},
-        'pred': {'dst': ctx.plt_dir / 'mask' / 'patches', 'name': 'pred'},
+        'img':  {'dst': ctx.plt_dir / 'image' / 'patches', 'name': 'image'},
+        'pred':  {'dst': ctx.plt_dir / f"epoch_{ctx.current_iteration}" / "patches", 'name': 'pred'},
+        'mask': {'dst': ctx.plt_dir / 'mask' / 'patches', 'name': 'mask'},
     }
 
+    for v in data.values():
+        v["dst"].mkdir(exist_ok=True, parents=True)
+        v["image"] = v["dst"].parent / f"{v['name']}.png"
+
+    # Save patches
+    for i in range(batch["input"].size(0)):
+        name = batch["image_path"][i].name
+
+        sip = data["img"]["dst"]  / name
+        stp = data["mask"]["dst"] / name
+        sop = data["pred"]["dst"] / name
+
+        if not sip.exists():
+            si = (batch["input"][i].cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8)
+            Image.fromarray(si).save(sip)
+
+        if not stp.exists():
+            st = (batch["target"][i].cpu().numpy().squeeze() * 255).astype(np.uint8)
+            Image.fromarray(st).save(stp)
+
+        if not sop.exists():
+            so = (preds[i].cpu().numpy().squeeze() * 255).astype(np.uint8)
+            Image.fromarray(so).save(sop)
+
+    # --- Merge patches for display ---
     for k, v in data.items():
-        v['dst'].mkdir(exist_ok=True, parents=True)
-        data[k]['image'] = v['dst'].parent / f"{v['name']}.png"
+        if not v["image"].exists():
+            reconstructed = merge_patches(v["dst"])
+            reconstructed.save(v["image"])
+            data[k]["image"] = reconstructed
+            shutil.rmtree(v["dst"])  # clean up patch dir to save space
+        else:
+            data[k]["image"] = Image.open(v["image"])
+        data[k]["image"] = data[k]["image"].convert("RGB" if k == "img" else "1")
 
-
-    for sample_idx in range(batch["input"].size(0)):
-        name = batch["image_path"][sample_idx].name
-        if not data['img']['image'].exists():
-            si = batch["input"][sample_idx] * 255
-            si = si.numpy().transpose(1, 2, 0).astype(np.uint8)
-            Image.fromarray(si).save(data['img']['dst'] / name)
-
-        if not data['mask']['image'].exists():
-            st = batch["target"][sample_idx].squeeze().numpy().astype(np.uint8) * 255
-            Image.fromarray(st).save(data['mask']['dst'] / name)
-
-        if not data['pred']['image'].exists():
-            so = preds[sample_idx].squeeze().numpy().astype(np.uint8) * 255
-            Image.fromarray(so).save(data['pred']['dst'] / name)
-
-    for k, v in data.items():
-        if not v['image'].exists():
-            reconstruced = merge_patches(v['dst'])
-            reconstruced.save(data[k]['image'])
-            data[k]['image'] = reconstruced
-            import shutil
-            shutil.rmtree(v['dst'])
-
-
+    # --- Log to W&B ---
     if ctx.config.tracker == "wandb":
         import wandb
-        ctx.wb_table.add_data(wandb.Image(
-            Image.open(data['img']['image']).convert('RGB'),
-            masks={
-                "ground_truth": {
-                    "mask_data": np.array(Image.open(data['mask']['image']).convert('L')) / 255.0,
-                    "class_labels": {0: "background", 1: "landslide"}
+        cls_lbs = {0: "background", 1: "landslide"}
+        ctx.wb_table.add_data(
+            wandb.Image(
+                data["img"]["image"],
+                masks={
+                    "ground_truth": {"mask_data": np.array(data["mask"]["image"]), "class_labels": cls_lbs},
+                    "prediction":   {"mask_data": np.array(data["pred"]["image"]), "class_labels": cls_lbs},
                 },
-                "prediction": {
-                    "mask_data": np.array(Image.open(data['pred']['image']).convert('L')) / 255.0,
-                    "class_labels": {0: "background", 1: "landslide"}
-                }
-            }
-        ), ctx.current_iteration)
+            ),
+            ctx.current_iteration,
+        )
 
 
 def schedule_early_stopping(ctx: TrainContext):
