@@ -1,44 +1,50 @@
-# Landslide detection
+# Landslide Detection
 
 ## Introduction
-This project is focused on the detection of landslides using satellite images.
-The main goal is to create a model that can predict the probability of a landslide in a given area
-The model will be trained using a dataset of satellite images chuncked into patches each one with an assossiated mask.
 
-
+This project focuses on the detection of landslides using satellite imagery.
+The main goal is to create a model that can predict the probability of a landslide occurring in a given area.
+The model is trained using a dataset of satellite images chunked into patches, each with an associated mask.
 
 ## Requirements
-- torch
-- tqdm
-- numpy
-- pyyaml
-- torchvision
 
+This project has been tested on Linux, WSL, and macOS. There is **no guarantee** that it will work on vanilla Windows.
+It uses **uv** to manage dependencies, as it is generally more stable and faster than pip or conda.
 
-## Training
-To train the model, run the following command:
+To install dependencies, run:
 
-**Example:**
 ```bash
-python scripts/model_train.py --model "unet" --image_sz 128 --criterion "binary_cross_entropy" --dataset "data/processed/L4S" --device "cuda:0" --epochs 3 --lr 1e-5 
+uv sync --all-extras
 ```
 
-Adjust the parameters as needed and in particular device according to available accelerators (currently tested only on cuda and mps)
+Next, fetch the data and:
 
+```bash
+mkdir -p data/raw                         # create data directory
+unzip -qq -o data/raw/land-anomalies.zip -d data/raw   # unzip the data archive
+rm data/raw/land-anomalies.zip            # [Optional] remove the archive to save space
+```
 
+## Code and How to Run an Experiment
 
-Metric
-- Visual harness on complete reconstructed image
-- F1 score pixel wise
-- F1 score patch-wise
-- AUC-ROC curve (not threshold optimization) to check is doing better than random
+The main code is in `scripts/recipe.py`. Other relevant components:
 
-Investigation
-- How different losses behave?
-  First is to train a model maybe unet - 22 * "bce", "focal_loss", "bce+dice", "bce+lovasz"
+* **Model registry**: `landslide/model/__init__.py` — defines pretrained model configs and paths to weights
+* **Dataloader**: `landslide/data.py`
+* **Base run config**: `config/base.yml`
 
-- How differnt augmentation behave?
-  Random Masking, RandomFlipping, Mosaic, Mixup, etc.
+Example run:
 
-- How does scaling goes with segformer and unet? (segformer b1, b2, unet 512, resnet unet)
+```bash
+uv run scripts/recipe.py --config 'config/base.yml' --name 'run_000' --model 'L4S/unet' --dataset 'data/processed/csv_split/A19_5cm.yml' --criterion 'bce' --device 'mps:0' --image_sz 128 --mask_sz 128
+```
 
+It is important to customize the dataset path and device.
+
+To track an experiment it is need to set WANDB_API_KEY as env variable and to add the flag `--tracker wandb` to execution command
+
+## Reports
+
+* [Criterion Evaluation Report](https://wandb.ai/gianluca-calo11/landslide/reports/Criterion-evaluation--VmlldzoxNDk1NzE4Nw)
+* [Model Evaluation Report](https://wandb.ai/gianluca-calo11/landslide/reports/Model-comparison--VmlldzoxNTAwOTcxNQ)
+* [Project Report](https://github.com/lum1t4/landslide/blob/main/docs/Final%20Report.pdf)

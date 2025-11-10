@@ -1,16 +1,15 @@
 import glob
 import os
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Self, Union
-import warnings
+from typing import Dict, List, Literal, Optional, Union
 
 import numpy as np
-import pandas as pd
 import PIL.Image as Image
 import torch
 from torch.utils.data import Dataset
 from torchvision.transforms.v2 import functional as F
 
+from landslide.augmentations import get_train_augmentation
 from landslide.utils import ROOT, yaml_load
 
 IMG_FORMATS = ["bmp", "jpg", "jpeg", "png", "tif", "tiff", "dng", "webp", "mpo"]
@@ -48,13 +47,13 @@ def get_images(path: str | Path, prefix="⚠️"):
 def img_to_mask(im: Path, mask_dirname: str = "mask") -> Path:
     """by default suppose img is under image folder which as sibling mask folder where mask is located"""
     parts = list(im.parts)
-    
+
     # Start from the second last element and move up (closest to leaf first)
     for i in range(len(parts) - 2, -1, -1):
         if parts[i].lower() in ("image", "img"):
             parts[i] = mask_dirname
             return Path(*parts)
-    
+
     # If no match found, return the path unchanged
     return im
 
@@ -70,6 +69,7 @@ def reduce_label(label: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
     label = label - 1
     label[label == 254] = 255
     return label
+
 
 def preprocess_mask(
     img: Image.Image,
@@ -143,61 +143,70 @@ class LandslideDataset(Dataset):
         do_rescale: bool = True,
         mean: list[float] = [0.485, 0.456, 0.406],
         std: list[float] = [0.229, 0.224, 0.225],
-        split: Literal['train', 'valid', 'test'] = "train"
+        split: Literal["train", "valid", "test"] = "train",
+        config: any = None,
     ):
         self.image_sz = image_sz
         self.mask_sz = mask_sz
-        self.normalize = do_normalize
         self.resize = do_resize
         self.reduce = do_reduce
         self.mean = mean
         self.std = std
         self.rescale = do_rescale
         self.split = split
+        self.augment = False
 
+        if config:
+            self.transform = get_train_augmentation(self, config, imgsz=image_sz)
+            self.augment = True
+        else:
+            self.transform = lambda x: x
         self.data = yaml_load(path)
-        self.root = Path(self.data['root'])
+        self.root = Path(self.data["root"])
         self.root = self.root if self.root.is_absolute() else ROOT / self.root
+        self.normalize = do_normalize
 
         assert self.root.exists(), f"Dataset location could not be found at {self.root}"
         assert Path(path).exists(), f"Index location could not be found at {path}"
         print(f"Loading {self.split} dataset from {path} with root at {self.root}")
 
-
         self.images = list(map(lambda x: self.root / x, self.data[self.split]))
 
     def __len__(self):
         return len(self.images)
-    
+
+    def __load__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, Path, Path]:
+        """Load a single sample (image and mask) without augmentation."""
+        imgp = self.images[index]
+        mskp = img_to_mask(imgp)
+
+        img = Image.open(imgp).convert("RGB")
+        msk = Image.open(mskp).convert("1")  # Ensure mask are loaded as binary
+        if self.resize:
+            img = img.resize((self.image_sz, self.image_sz))
+            msk = msk.resize((self.image_sz, self.image_sz))
+
+        img = np.array(img)
+        msk = np.array(msk, dtype=np.uint8)
+
+        return {"image_path": imgp, "mask_path": mskp, "input": img, "target": msk}
+
     def __getitem__(self, index: int) -> dict:
-        img_path = self.images[index]
-        mask_path = img_to_mask(img_path)
-        img = Image.open(img_path).convert("RGB")
-        mask = Image.open(mask_path).convert("L")
+        item = self.transform(self.__load__(index))
+        x = F.to_image(item["input"])
+        y = F.resize(F.to_image(item["target"]), self.mask_sz, interpolation=2)
 
-        img = preprocess_img(
-            img,
-            do_resize=self.resize,
-            size=self.image_sz,
-            image_mean=self.mean,
-            image_std=self.std,
-            do_rescale=self.rescale,
-            do_normalize=self.normalize,
-        )
-        mask = preprocess_mask(
-            mask,
-            do_resize=self.resize,
-            size=self.mask_sz,
-            do_reduce=self.reduce,
-        )
+        if not self.augment:
+            x = F.to_dtype(x, torch.float32, scale=False)
+            if self.rescale:
+                x = x / 255.0
+            if self.normalize:
+                x = F.normalize(x, mean=self.mean, std=self.std)
 
-        return {
-            "image_path": img_path,
-            "mask_path": mask_path,
-            "input": img,
-            "target": mask
-        }
-    
+        item["input"] = x
+        item["target"] = y
+        return item
+
     @staticmethod
     def collate_fn(items: list[dict]) -> dict:
         """Collate function for PyTorch DataLoader."""

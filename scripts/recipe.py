@@ -59,6 +59,27 @@ class TrainConfig:
     deterministic: bool = False
     normalize: bool = False
     workers: int = 8
+    bgr: float = 0.0  # image channel BGR (probability)
+    augment: bool = True
+    mosaic: float = 1.0
+    mixup: float = 0.0
+    cutmix: float = 0.0
+    degrees: float = 0.0
+    translate: float = 0.1
+    scale: float = 0.5
+    shear: float = 0.0
+    perspective: float = 0.0
+    flipud: float = 0.0
+    fliplr: float = 0.5
+    hsv_h: float = 0.015
+    hsv_s: float = 0.7
+    hsv_v: float = 0.4
+    copy_paste: float = 0.0
+    copy_paste_mode: Literal["mixup", "flip"] = "flip"
+    crop_fraction: float = 1.0
+    erasing: float = 0.4
+    auto_augment: Literal["randaugment", "autoaugment", "augmix"] = "randaugment"
+
     # Focal loss
     # alpha: float = 0.75
     # gamma: float = 2.0
@@ -131,8 +152,8 @@ class TrainContext:
 
 def schedule_dataloaders(ctx: TrainContext):
     config = ctx.config
-    train_dataset = LandslideDataset(config.dataset, config.image_sz, config.mask_sz, config.normalize, split="train")
-    valid_dataset = LandslideDataset(config.dataset, config.image_sz, config.mask_sz, config.normalize, split=config.val)
+    train_dataset = LandslideDataset(config.dataset, config.image_sz, config.mask_sz, do_normalize=config.normalize and not config.augment, split="train", config=config)
+    valid_dataset = LandslideDataset(config.dataset, config.image_sz, config.mask_sz, do_normalize=config.normalize and not config.augment, split=config.val)
     ctx.train_loader = dataloader(train_dataset, batch_size=config.batch_size, workers=config.workers, shuffle=True, mode='train')
     ctx.valid_loader = dataloader(valid_dataset, batch_size=config.batch_size, workers=config.workers, shuffle=False, mode='valid')
     print(f"Training with {len(train_dataset)} train and {len(valid_dataset)} validation samples with imgsz {config.image_sz}")
@@ -164,9 +185,7 @@ def schedule_setup_logging(ctx: TrainContext):
         ctx.tracker.run.define_metric(ctx.config.monitor, summary=ctx.config.mode)
         ctx.tracker.run.define_metric("train/loss", summary="min")
         ctx.tracker.run.define_metric("valid/F1 (pixel)", summary="max")
-        ctx.tracker.run.define_metric("valid/F1 (patch)", summary="max")    
-        import wandb
-        ctx.wb_table = wandb.Table(columns=["Image", "Epoch"])    
+        ctx.tracker.run.define_metric("valid/F1 (patch)", summary="max")
     return ctx
 
 
@@ -252,7 +271,7 @@ def schedule_valid_epoch(ctx: TrainContext):
     for i, batch in progress:
         from torchvision.transforms.v2 import functional as V
         
-        inputs = batch["input"].to(device, non_blocking=True)
+        inputs = batch["input"].to(device, non_blocking=True, dtype=torch.float32)
         targets = batch["target"].to(device, non_blocking=True, dtype=torch.float32)
         logits = model(V.normalize(inputs, mean=mean, std=std) if normalize else inputs)  # (B, CLS, H, W)
         logits = F.interpolate(logits, size=targets.shape[-2:], mode="bilinear", align_corners=False)
@@ -293,7 +312,7 @@ def schedule_valid_epoch(ctx: TrainContext):
         patch_recall = patch_TP / (patch_TP + patch_FN + eps)
         patch_accuracy = (patch_TP + patch_TN) / (patch_TP + patch_TN + patch_FP + patch_FN + eps)
         patch_f1 = 2 * patch_precision * patch_recall / (patch_precision + patch_recall + eps)
-        plot_batch(ctx, batch, preds.cpu())
+        # TODO: review this plot_batch(ctx, batch, preds.cpu())
         # update description with conf matrix
         progress.set_description(("%11.4g" * 4) % (precision, recall, accuracy, f1))
 
@@ -450,7 +469,7 @@ def schedule_model_checkpointing(ctx: TrainContext):
     torch.save({
         "epoch": ctx.current_iteration,
         "model": ctx.model.state_dict(),
-        "optimizer": ctx.optimizer.state_dict(),
+        # "optimizer": ctx.optimizer.state_dict(),
         "metrics": ctx.metrics,
         "config": vars(ctx.config),
         "date": datetime.now().isoformat(),
@@ -488,8 +507,8 @@ def schedule_train(config: TrainConfig):
             break
 
     # Log wandb table at the end of training
-    if ctx.config.tracker == "wandb":
-        ctx.tracker.log({"valid/predictions": ctx.wb_table})
+    # if ctx.config.tracker == "wandb":
+    #     ctx.tracker.log({"valid/predictions": ctx.wb_table})
 
     # schedule_final_validation(ctx)
 
@@ -535,6 +554,8 @@ if __name__ == "__main__":
     parser.add_argument("--save_period", type=int, help="Epoch interval for periodic checkpoint saving (-1 to disable).")
     parser.add_argument("--tracker", type=str, help="Tracker type for logging (e.g., 'wandb').")
     parser.add_argument("--val", type=str, help="Fold key to choose data for validation.")
+
+    parser.add_argument("--augment", action=argparse.BooleanOptionalAction, help="wheter activate augmentation")
     args = parser.parse_args()
     args = {k: v for k, v in vars(args).items() if v is not None}
     if args["config"]:
